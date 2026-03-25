@@ -26,6 +26,16 @@ export class Go2rtcApi {
     return res.json() as Promise<Record<string, unknown>>;
   }
 
+  /** Create an empty stream entry in go2rtc so ffmpeg can push RTSP to it. */
+  async ensureStream(name: string): Promise<void> {
+    const url = `${this.baseUrl}/api/streams?dst=${encodeURIComponent(name)}`;
+    const res = await fetch(url, { method: 'PUT' });
+    if (!res.ok) {
+      throw new Error(`Failed to create go2rtc stream "${name}": ${res.status}`);
+    }
+    log.info({ stream: name }, 'Registered stream in go2rtc');
+  }
+
   /** Wait for go2rtc to become available, with timeout. */
   async waitReady(timeoutMs = 30_000): Promise<void> {
     const start = Date.now();

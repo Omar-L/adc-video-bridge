@@ -2,6 +2,7 @@ import { createChildLogger } from '../utils/logger.js';
 import { AlarmAuth } from '../auth/alarm-auth.js';
 import { TokenManager } from '../auth/token-manager.js';
 import { CameraStream } from './camera-stream.js';
+import { Go2rtcApi } from '../go2rtc/go2rtc-api.js';
 import type { CameraConfig } from '../config.js';
 import type { EndToEndWebrtcConfig } from '../types.js';
 
@@ -22,6 +23,7 @@ export class CameraManager {
     private readonly auth: AlarmAuth,
     private readonly tokenManager: TokenManager,
     private readonly rtspBaseUrl: string,
+    private readonly go2rtc: Go2rtcApi,
   ) {}
 
   async start(cameras: CameraConfig[]): Promise<void> {
@@ -40,6 +42,11 @@ export class CameraManager {
           quality: 'hd' as const,
         }));
       log.info({ count: cameraConfigs.length }, 'Discovered cameras');
+    }
+
+    // Register streams in go2rtc so ffmpeg RTSP push has somewhere to land
+    for (const cam of cameraConfigs) {
+      await this.go2rtc.ensureStream(cam.name);
     }
 
     for (const cam of cameraConfigs) {

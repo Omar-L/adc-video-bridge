@@ -1,8 +1,6 @@
 import { createChildLogger } from '../utils/logger.js';
-import { AlarmAuth } from '../auth/alarm-auth.js';
 import { TokenManager } from '../auth/token-manager.js';
 import { CameraStream } from './camera-stream.js';
-import { Go2rtcApi } from '../go2rtc/go2rtc-api.js';
 import type { CameraConfig } from '../config.js';
 import type { EndToEndWebrtcConfig } from '../types.js';
 
@@ -20,36 +18,21 @@ export class CameraManager {
   private running = false;
 
   constructor(
-    private readonly auth: AlarmAuth,
     private readonly tokenManager: TokenManager,
     private readonly rtspBaseUrl: string,
-    private readonly go2rtc: Go2rtcApi,
   ) {}
 
   async start(cameras: CameraConfig[]): Promise<void> {
+    if (cameras.length === 0) {
+      throw new Error(
+        'No cameras configured. Run "npx tsx src/discover.ts" to find your camera IDs, ' +
+        'then add them to config/config.yaml and config/go2rtc.yaml.',
+      );
+    }
+
     this.running = true;
 
-    let cameraConfigs = cameras;
-
-    if (cameraConfigs.length === 0) {
-      log.info('No cameras configured, auto-discovering...');
-      const discovered = await this.auth.getCameraList();
-      cameraConfigs = discovered
-        .filter((c) => c.supportsLiveView)
-        .map((c) => ({
-          id: c.id,
-          name: c.description.toLowerCase().replace(/\s+/g, '-') || `camera-${c.id}`,
-          quality: 'hd' as const,
-        }));
-      log.info({ count: cameraConfigs.length }, 'Discovered cameras');
-    }
-
-    // Register streams in go2rtc so ffmpeg RTSP push has somewhere to land
-    for (const cam of cameraConfigs) {
-      await this.go2rtc.ensureStream(cam.name);
-    }
-
-    for (const cam of cameraConfigs) {
+    for (const cam of cameras) {
       const stream = new CameraStream(cam.id, cam.name, this.rtspBaseUrl);
       this.streams.set(cam.id, stream);
     }
@@ -62,10 +45,10 @@ export class CameraManager {
       log.error({ cameraId }, 'Token error: %s', error.message);
     });
 
-    const cameraIds = cameraConfigs.map((c) => c.id);
+    const cameraIds = cameras.map((c) => c.id);
     await this.tokenManager.start(cameraIds);
 
-    log.info({ cameras: cameraConfigs.map((c) => c.name) }, 'Camera manager started');
+    log.info({ cameras: cameras.map((c) => c.name) }, 'Camera manager started');
   }
 
   async stop(): Promise<void> {

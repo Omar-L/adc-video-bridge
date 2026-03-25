@@ -4,10 +4,10 @@ rtsp:
 api:
   listen: ":1984"
 
-# Streams are auto-registered by adc-video-bridge.
-# To add manual entries:
-# streams:
-#   driveway: ""
+# Each camera needs a matching stream entry.
+# Run "npx tsx src/discover.ts" to find your camera names.
+streams:
+  driveway: ""
 
 log:
   level: info

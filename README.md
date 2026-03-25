@@ -166,17 +166,51 @@ docker compose -f docker-compose.yml up --build -d
 docker compose -f docker-compose.yml logs -f
 ```
 
-### go2rtc configuration
+### Camera discovery
 
-Camera streams are auto-registered by the bridge via the go2rtc REST API. No manual stream entries are needed in `config/go2rtc.yaml`:
+Use the discovery tool to find your camera IDs and generate config snippets:
+
+```bash
+# Local
+npx tsx src/discover.ts
+
+# Docker (after building)
+docker compose exec adc-video-bridge node dist/discover.js
+```
+
+This prints a table of cameras on your account and outputs ready-to-paste YAML for both `config/config.yaml` and `config/go2rtc.yaml`.
+
+### Configuration
+
+Each camera must be defined in two config files:
+
+**`config/config.yaml`** — bridge config with camera IDs and stream names:
 
 ```yaml
+cameras:
+  - id: "100652375-2048"
+    name: "driveway"
+    quality: "hd"
+  - id: "100652375-2049"
+    name: "backyard"
+    quality: "hd"
+```
+
+**`config/go2rtc.yaml`** — each camera needs a matching empty stream entry:
+
+```yaml
+streams:
+  driveway: ""
+  backyard: ""
+
 rtsp:
   listen: ":8554"
 
 api:
   listen: ":1984"
 ```
+
+The `name` in `config.yaml` must match the stream name in `go2rtc.yaml`.
 
 ## Dependencies
 

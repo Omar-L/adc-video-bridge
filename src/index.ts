@@ -38,7 +38,7 @@ async function main(): Promise<void> {
   // Initialize token manager and camera manager
   const tokenManager = new TokenManager(auth);
   const rtspBaseUrl = `rtsp://127.0.0.1:${config.go2rtc.rtspPort}`;
-  const cameraManager = new CameraManager(auth, tokenManager, rtspBaseUrl, go2rtc);
+  const cameraManager = new CameraManager(tokenManager, rtspBaseUrl);
 
   // Graceful shutdown
   const shutdown = async (signal: string) => {

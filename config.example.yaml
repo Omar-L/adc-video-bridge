@@ -3,7 +3,7 @@ alarm:
   password: "password"
   mfaToken: ""  # optional, for 2FA bypass
 
-# Leave empty to auto-discover all cameras
+# Run "npx tsx src/discover.ts" to find your camera IDs and names
 cameras:
   - id: "100654376-1079"
     name: "front-door"

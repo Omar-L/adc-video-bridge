@@ -151,15 +151,26 @@ docker compose -f docker-compose.yml logs -f
 # rtsp://<server-ip>:8554/<camera-name>
 ```
 
+### Rebuild and redeploy
+
+After pulling new changes or modifying config:
+
+```bash
+# Re-vendor dependency (only needed if node-alarm-dot-com changed)
+./scripts/prepare-docker.sh
+
+# Rebuild and restart
+docker compose -f docker-compose.yml up --build -d
+
+# Verify it's running
+docker compose -f docker-compose.yml logs -f
+```
+
 ### go2rtc configuration
 
-Each camera needs an empty stream entry in `config/go2rtc.yaml`:
+Camera streams are auto-registered by the bridge via the go2rtc REST API. No manual stream entries are needed in `config/go2rtc.yaml`:
 
 ```yaml
-streams:
-  driveway: ""
-  backyard: ""
-
 rtsp:
   listen: ":8554"
 

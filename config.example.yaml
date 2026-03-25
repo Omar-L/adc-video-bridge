@@ -1,0 +1,20 @@
+alarm:
+  username: "user@email.com"
+  password: "password"
+  mfaToken: ""  # optional, for 2FA bypass
+
+# Leave empty to auto-discover all cameras
+cameras:
+  - id: "100654376-1079"
+    name: "front-door"
+    quality: "hd"  # hd or sd
+  # - id: "100652375-2049"
+  #   name: "backyard"
+  #   quality: "hd"
+
+go2rtc:
+  apiUrl: "http://localhost:1984"
+  rtspPort: 8554
+
+logging:
+  level: "info"  # debug, info, warn, error

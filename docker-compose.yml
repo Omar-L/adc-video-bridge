@@ -1,0 +1,16 @@
+services:
+  adc-video-bridge:
+    build: .
+    container_name: adc-video-bridge
+    restart: unless-stopped
+    volumes:
+      - ./config:/app/config
+    ports:
+      - "8554:8554"   # RTSP
+      - "1984:1984"   # go2rtc web UI (optional, for debugging)
+    networks:
+      - homebridge
+
+networks:
+  homebridge:
+    external: true

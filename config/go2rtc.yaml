@@ -1,0 +1,11 @@
+rtsp:
+  listen: ":8554"
+
+api:
+  listen: ":1984"
+
+streams:
+  driveway: ""
+
+log:
+  level: info

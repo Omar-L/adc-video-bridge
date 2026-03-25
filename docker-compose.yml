@@ -8,9 +8,3 @@ services:
     ports:
       - "8554:8554"   # RTSP
       - "1984:1984"   # go2rtc web UI (optional, for debugging)
-    networks:
-      - homebridge
-
-networks:
-  homebridge:
-    external: true

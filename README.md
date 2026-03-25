@@ -132,17 +132,23 @@ npx tsx src/index.ts
 ### Docker
 
 ```bash
+# Node.js and npm are required on the host to build the vendored dependency
+# Ubuntu/Debian: sudo apt install nodejs npm
+
 # Vendor the node-alarm-dot-com dependency
 ./scripts/prepare-docker.sh
 
-# Build and run
-docker compose -f docker-compose.dev.yml up --build
+# Build and run (detached)
+docker compose -f docker-compose.yml up --build -d
 
-# View go2rtc web UI
-open http://localhost:1984
+# View logs
+docker compose -f docker-compose.yml logs -f
 
-# View stream in VLC
-# rtsp://localhost:8554/<camera-name>
+# View go2rtc web UI (use your server's IP)
+# http://<server-ip>:1984
+
+# View stream in VLC (use your server's IP)
+# rtsp://<server-ip>:8554/<camera-name>
 ```
 
 ### go2rtc configuration

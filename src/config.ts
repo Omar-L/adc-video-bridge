@@ -69,7 +69,7 @@ export function loadConfig(): AppConfig {
 
   return {
     alarm,
-    cameras: fileConfig.cameras ?? DEFAULT_CONFIG.cameras,
+    cameras: Array.isArray(fileConfig.cameras) ? fileConfig.cameras : DEFAULT_CONFIG.cameras,
     go2rtc: { ...DEFAULT_CONFIG.go2rtc, ...fileConfig.go2rtc },
     logging: { ...DEFAULT_CONFIG.logging, ...fileConfig.logging },
   };

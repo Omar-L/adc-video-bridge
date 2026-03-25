@@ -223,8 +223,10 @@ export class CameraStream {
           const buf = rtp.serialize();
           this.videoSocket.send(buf, this.videoPort, '127.0.0.1');
           rtpCount++;
-          if (rtpCount === 1 || rtpCount === 10 || rtpCount === 100 || rtpCount % 1000 === 0) {
+          if (rtpCount === 1 || rtpCount === 100) {
             log.info({ camera: this.cameraName, rtpCount, bytes: buf.length }, 'RTP packets sent to ffmpeg');
+          } else if (rtpCount % 1000 === 0) {
+            log.debug({ camera: this.cameraName, rtpCount, bytes: buf.length }, 'RTP packets sent to ffmpeg');
           }
         }
       });
@@ -393,7 +395,14 @@ export class CameraStream {
 
     this.ffmpeg.stderr?.on('data', (data: Buffer) => {
       const line = data.toString().trim();
-      if (line) log.info({ camera: this.cameraName, ffmpeg: line }, 'ffmpeg');
+      if (!line) return;
+      // ffmpeg progress lines are noisy once streaming is established
+      const isProgress = line.startsWith('frame=') || line.startsWith('size=');
+      if (isProgress) {
+        log.debug({ camera: this.cameraName, ffmpeg: line }, 'ffmpeg');
+      } else {
+        log.info({ camera: this.cameraName, ffmpeg: line }, 'ffmpeg');
+      }
     });
 
     this.ffmpeg.on('exit', (code) => {

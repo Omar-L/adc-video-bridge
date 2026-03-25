@@ -1,18 +1,28 @@
 #!/bin/sh
-# Copy node-alarm-dot-com into vendor/ for Docker builds
+# Clone, build, and vendor node-alarm-dot-com for Docker builds
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+VENDOR_DIR="$PROJECT_DIR/vendor/node-alarm-dot-com"
+TEMP_DIR="$(mktemp -d)"
 
-rm -rf "$PROJECT_DIR/vendor/node-alarm-dot-com"
-mkdir -p "$PROJECT_DIR/vendor/node-alarm-dot-com"
+cleanup() {
+  rm -rf "$TEMP_DIR"
+}
+trap cleanup EXIT
 
-# Build the dependency
-cd "$PROJECT_DIR/../node-alarm-dot-com"
+echo "Cloning node-alarm-dot-com into temp directory..."
+git clone --depth 1 https://github.com/node-alarm-dot-com/node-alarm-dot-com.git "$TEMP_DIR/node-alarm-dot-com"
+
+echo "Building..."
+cd "$TEMP_DIR/node-alarm-dot-com"
+npm install
 npm run build
 
-# Copy built dist + package.json
-cp -r dist package.json "$PROJECT_DIR/vendor/node-alarm-dot-com/"
+echo "Vendoring into $VENDOR_DIR..."
+rm -rf "$VENDOR_DIR"
+mkdir -p "$VENDOR_DIR"
+cp -r dist package.json "$VENDOR_DIR/"
 
-echo "Vendored node-alarm-dot-com into vendor/"
+echo "Done — vendored node-alarm-dot-com into vendor/"

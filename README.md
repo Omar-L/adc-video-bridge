@@ -63,7 +63,7 @@ The `liveVideoHighestResSources` API call triggers the camera to wake up and dia
 - Retry with a fresh token after 15 seconds — the camera is now awake
 - Subsequent retries use 10-second intervals
 
-Token TTL is 180 seconds. The bridge refreshes tokens every 150 seconds, tearing down and re-establishing the WebRTC connection each time. This causes a ~1-2 second gap in the RTSP stream, which HKSV handles gracefully.
+Token TTL is 180 seconds. The bridge refreshes tokens every 150 seconds, tearing down and re-establishing the WebRTC connection each time. This causes a ~1-2 second gap in the RTSP stream.
 
 ## Current status
 
@@ -80,10 +80,9 @@ Token TTL is 180 seconds. The bridge refreshes tokens every 150 seconds, tearing
 
 **Not yet done:**
 - Multi-camera testing (single camera verified)
-- Homebridge camera-ffmpeg integration
 - Deployment to production server
 - go2rtc stream auto-configuration (currently manual in `config/go2rtc.yaml`)
-- Cleanup of debug logging verbosity
+- HKSV recording support (see [Limitations](#limitations))
 
 ## Project structure
 
@@ -211,6 +210,30 @@ The `name` in `config.yaml` must match the stream name in `go2rtc.yaml`.
 - [go2rtc](https://github.com/AlexxIT/go2rtc) — RTSP server (accepts ffmpeg push, serves to clients)
 - [pino](https://github.com/pinojs/pino) — Structured logging
 - ffmpeg — RTP → RTSP transcoding (copy mode, no re-encoding)
+
+## Limitations
+
+### HKSV recording does not work
+
+Live view in Apple Home works, but HomeKit Secure Video recording does not. The stream does not meet HKSV's requirements:
+
+- **Frame rate** — cameras output 10fps; HKSV requires 15fps or higher
+- **Audio** — no audio track is piped through; HKSV requires AAC-ELD audio
+- **Stream gaps** — the 150s token refresh cycle tears down the WebRTC connection, causing ~1-2 second interruptions
+- **Camera wake delay** — cameras take ~15 seconds to dial in on first connect, so motion events are missed
+
+### Not a 24/7 stream
+
+ADC cameras are designed for on-demand live view, not continuous streaming. The bridge holds a perpetual live view session by refreshing tokens every 150 seconds, but this is a workaround — ADC does not support persistent streaming.
+
+### API rate limits
+
+Alarm.com may ban accounts that poll too aggressively. Known safe minimums (from [homebridge-node-alarm-dot-com](https://github.com/node-alarm-dot-com/homebridge-node-alarm-dot-com)):
+
+- **Session re-authentication**: ≥10 minutes (bridge uses 55 min)
+- **Device polling**: ≥60 seconds (bridge uses 150s per camera)
+
+With multiple cameras, aggregate API load scales linearly — 3 cameras means a video token API call roughly every 50 seconds.
 
 ## Future exploration
 

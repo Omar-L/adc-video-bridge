@@ -4,6 +4,7 @@ import { AlarmAuth } from './auth/alarm-auth.js';
 import { TokenManager } from './auth/token-manager.js';
 import { CameraManager } from './camera/camera-manager.js';
 import { Go2rtcApi } from './go2rtc/go2rtc-api.js';
+import { AlarmEventListener } from './events/alarm-event-listener.js';
 
 const log = logger.child({ component: 'main' });
 
@@ -40,9 +41,16 @@ async function main(): Promise<void> {
   const rtspBaseUrl = `rtsp://127.0.0.1:${config.go2rtc.rtspPort}`;
   const cameraManager = new CameraManager(tokenManager, rtspBaseUrl);
 
+  // Initialize WebSocket event listener
+  const eventListener = new AlarmEventListener(auth);
+  eventListener.on('error', (err) => {
+    log.warn('Event listener error: %s', err.message);
+  });
+
   // Graceful shutdown
   const shutdown = async (signal: string) => {
     log.info({ signal }, 'Shutting down...');
+    eventListener.stop();
     await cameraManager.stop();
     auth.destroy();
     process.exit(0);
@@ -51,7 +59,8 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-  // Start streaming
+  // Start event listener and streaming
+  await eventListener.start();
   await cameraManager.start(config.cameras);
 
   // Periodic status logging

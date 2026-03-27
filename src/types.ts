@@ -1,3 +1,6 @@
+export type { AlarmEvent, MotionEvent, MotionEndEvent, ClipEvent, SensorEvent } from './events/types.js';
+export { EventType } from './events/types.js';
+
 /** ICE server configuration for WebRTC peer connections. */
 export interface IceServer {
   urls: string[];

@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist",
-    "probe": "tsx src/probe.ts"
+    "probe": "tsx src/probe.ts",
+    "ws-probe": "tsx src/ws-probe.ts"
   },
   "engines": {
     "node": ">=20.0.0"

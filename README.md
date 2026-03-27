@@ -108,116 +108,18 @@ src/
 
 ## Setup
 
-### Prerequisites
+See the **[Setup Guide](docs/SETUP.md)** for full end-to-end instructions covering Docker deployment, camera discovery, configuration, Homebridge integration, and HomeKit motion notifications.
 
-- Node.js 20+
-- Docker (for containerized deployment)
-- An Alarm.com account with cameras
-
-### Local development
+**Quick start:**
 
 ```bash
-# Install deps
-npm install
-
-# Create config
+git clone https://github.com/Omar-L/adc-video-bridge.git
+cd adc-video-bridge
 cp config/config.example.yaml config/config.yaml
-# Edit config/config.yaml with your credentials and camera IDs
-
-# Run locally (requires go2rtc running separately)
-npx tsx src/index.ts
-```
-
-### Docker
-
-```bash
-# Build and run (detached)
+cp config/go2rtc.example.yaml config/go2rtc.yaml
+# Edit both config files with your credentials and camera IDs
 docker compose -f docker-compose.yml up --build -d
-
-# View logs
-docker compose -f docker-compose.yml logs -f
-
-# View go2rtc web UI (use your server's IP)
-# http://<server-ip>:1984
-
-# View stream in VLC (use your server's IP)
-# rtsp://<server-ip>:8554/<camera-name>
 ```
-
-### Rebuild and redeploy
-
-After pulling new changes or modifying config:
-
-```bash
-# Rebuild and restart
-docker compose -f docker-compose.yml up --build -d
-
-# Verify it's running
-docker compose -f docker-compose.yml logs -f
-```
-
-### Camera discovery
-
-Use the discovery tool to find your camera IDs and generate config snippets:
-
-```bash
-# Local
-npx tsx src/discover.ts
-
-# Docker (after building)
-docker compose exec adc-video-bridge node dist/discover.js
-```
-
-This prints a table of cameras on your account and outputs ready-to-paste YAML for both `config/config.yaml` and `config/go2rtc.yaml`.
-
-### Configuration
-
-Each camera must be defined in two config files:
-
-**`config/config.yaml`** — bridge config with camera IDs and stream names:
-
-```yaml
-cameras:
-  - id: "100652375-2048"
-    name: "driveway"
-    quality: "hd"
-  - id: "100652375-2049"
-    name: "backyard"
-    quality: "hd"
-```
-
-**`config/go2rtc.yaml`** — each camera needs a matching empty stream entry:
-
-```yaml
-streams:
-  driveway: ""
-  backyard: ""
-
-rtsp:
-  listen: ":8554"
-
-api:
-  listen: ":1984"
-```
-
-The `name` in `config.yaml` must match the stream name in `go2rtc.yaml`.
-
-### homebridge-camera-ffmpeg
-
-Example [homebridge-camera-ffmpeg](https://github.com/Sunoo/homebridge-camera-ffmpeg) config for one camera. Replace `<server-ip>` (e.g. `10.0.0.41`) with the IP of the machine running adc-video-bridge. The camera name in the RTSP and snapshot URLs must match the stream name in `go2rtc.yaml`.
-
-```json
-{
-  "name": "Driveway",
-  "videoConfig": {
-    "source": "-i rtsp://<server-ip>:8554/driveway",
-    "stillImageSource": "-timeout 10000000 -i http://<server-ip>:1984/api/frame.jpeg?src=driveway -vframes 1",
-    "audio": false
-  }
-}
-```
-
-The `-timeout 10000000` (10 seconds) on `stillImageSource` is important — without it, ffmpeg hangs indefinitely when go2rtc has no frame available during token refresh gaps, which causes Homebridge to become unresponsive.
 
 ## Dependencies
 

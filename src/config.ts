@@ -5,6 +5,7 @@ import { parse } from 'yaml';
 export interface CameraConfig {
   id: string;
   name: string;
+  homebridgeName?: string;
   quality: 'hd' | 'sd';
 }
 

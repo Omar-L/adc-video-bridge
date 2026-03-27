@@ -50,43 +50,47 @@ async function main(): Promise<void> {
   // Motion webhook to Homebridge
   if (config.homebridge?.motionUrl) {
     const { motionUrl, motionTimeoutMs } = config.homebridge;
-    const cameraIdToName = new Map(config.cameras.map((c) => [c.id, c.name]));
+    const cameraIdToHbName = new Map(
+      config.cameras.map((c) => [c.id, c.homebridgeName ?? c.name]),
+    );
     const motionTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    const motionActive = new Set<string>();
 
     log.info({ motionUrl }, 'Homebridge motion webhooks enabled');
 
-    const sendMotion = async (cameraName: string, motion: boolean) => {
-      const url = `${motionUrl}/motion/${encodeURIComponent(cameraName)}`;
+    const sendMotionToggle = async (hbName: string) => {
+      const url = `${motionUrl}/motion?${encodeURIComponent(hbName)}`;
       try {
-        await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ motion }),
-        });
-        log.info({ camera: cameraName, motion }, 'Motion webhook sent');
+        const res = await fetch(url);
+        const body = await res.json() as { error: boolean; message: string };
+        log.info({ camera: hbName, response: body.message }, 'Motion webhook sent');
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        log.warn({ camera: cameraName }, 'Motion webhook failed: %s', msg);
+        log.warn({ camera: hbName }, 'Motion webhook failed: %s', msg);
       }
     };
 
     eventListener.on('motion', (event) => {
-      const cameraName = cameraIdToName.get(event.cameraId);
-      if (!cameraName) return;
+      const hbName = cameraIdToHbName.get(event.cameraId);
+      if (!hbName) return;
 
       // Clear existing reset timer
-      const existing = motionTimers.get(cameraName);
+      const existing = motionTimers.get(hbName);
       if (existing) clearTimeout(existing);
 
-      // Trigger motion
-      sendMotion(cameraName, true);
+      // Trigger motion on (only if not already active)
+      if (!motionActive.has(hbName)) {
+        motionActive.add(hbName);
+        sendMotionToggle(hbName);
+      }
 
       // Schedule reset after timeout
       motionTimers.set(
-        cameraName,
+        hbName,
         setTimeout(() => {
-          motionTimers.delete(cameraName);
-          sendMotion(cameraName, false);
+          motionTimers.delete(hbName);
+          motionActive.delete(hbName);
+          sendMotionToggle(hbName);
         }, motionTimeoutMs),
       );
     });

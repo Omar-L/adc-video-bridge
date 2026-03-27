@@ -7,9 +7,11 @@ alarm:
 cameras:
   - id: "100654376-1079"
     name: "front-door"
+    homebridgeName: "Front Door"  # must match the camera name in homebridge-camera-ffmpeg
     quality: "hd"  # hd or sd
   # - id: "100652375-2049"
   #   name: "backyard"
+  #   homebridgeName: "Backyard"
   #   quality: "hd"
 
 go2rtc:

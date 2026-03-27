@@ -6,9 +6,9 @@ import type { AlarmAuth } from '../auth/alarm-auth.js';
 import {
   EventType,
   type AlarmEvent,
-  type MotionEvent,
   type AlarmEventListenerEvents,
 } from './types.js';
+import { parseBaseEvent, parseMotionEvent } from './parse-event.js';
 
 const log = createChildLogger('alarm-events');
 
@@ -119,17 +119,12 @@ export class AlarmEventListener extends EventEmitter {
       return;
     }
 
-    const base = this.parseBaseEvent(msg);
+    const base = parseBaseEvent(msg);
     this.emit('raw', base);
 
     switch (base.eventType) {
       case EventType.MOTION: {
-        const motion: MotionEvent = {
-          ...base,
-          eventType: EventType.MOTION,
-          ruleName: decodeURIComponent(base.extraData.rn ?? '').replace(/\+/g, ' '),
-          category: Number(base.extraData.category) || 0,
-        };
+        const motion = parseMotionEvent(base);
         log.info(
           { cameraId: motion.cameraId, rule: motion.ruleName },
           'Motion detected',
@@ -152,38 +147,6 @@ export class AlarmEventListener extends EventEmitter {
       default:
         log.debug({ eventType: base.eventType, deviceId: base.deviceId }, 'Unhandled event type');
     }
-  }
-
-  private parseBaseEvent(msg: Record<string, unknown>): AlarmEvent {
-    const unitId = Number(msg.UnitId) || 0;
-    const deviceId = Number(msg.DeviceId) || 0;
-    const qstring = typeof msg.QstringForExtraData === 'string' ? msg.QstringForExtraData : '';
-
-    return {
-      eventDateUtc: String(msg.EventDateUtc ?? ''),
-      unitId,
-      deviceId,
-      cameraId: `${unitId}-${deviceId}`,
-      eventType: Number(msg.EventType) || 0,
-      eventValue: Number(msg.EventValue) || 0,
-      correlatedId: msg.CorrelatedId != null ? Number(msg.CorrelatedId) : null,
-      extraData: this.parseQueryString(qstring),
-      deviceType: Number(msg.DeviceType) || 0,
-    };
-  }
-
-  private parseQueryString(qs: string): Record<string, string> {
-    if (!qs) return {};
-    const result: Record<string, string> = {};
-    for (const pair of qs.split('&')) {
-      const idx = pair.indexOf('=');
-      if (idx === -1) {
-        result[pair] = '';
-      } else {
-        result[pair.slice(0, idx)] = pair.slice(idx + 1);
-      }
-    }
-    return result;
   }
 }
 

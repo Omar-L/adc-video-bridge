@@ -202,6 +202,23 @@ api:
 
 The `name` in `config.yaml` must match the stream name in `go2rtc.yaml`.
 
+### homebridge-camera-ffmpeg
+
+Example [homebridge-camera-ffmpeg](https://github.com/Sunoo/homebridge-camera-ffmpeg) config for one camera. Replace `<server-ip>` (e.g. `10.0.0.41`) with the IP of the machine running adc-video-bridge. The camera name in the RTSP and snapshot URLs must match the stream name in `go2rtc.yaml`.
+
+```json
+{
+  "name": "Driveway",
+  "videoConfig": {
+    "source": "-i rtsp://<server-ip>:8554/driveway",
+    "stillImageSource": "-timeout 10000000 -i http://<server-ip>:1984/api/frame.jpeg?src=driveway -vframes 1",
+    "audio": false
+  }
+}
+```
+
+The `-timeout 10000000` (10 seconds) on `stillImageSource` is important — without it, ffmpeg hangs indefinitely when go2rtc has no frame available during token refresh gaps, which causes Homebridge to become unresponsive.
+
 ## Dependencies
 
 - [node-alarm-dot-com](https://github.com/node-alarm-dot-com/node-alarm-dot-com) — Alarm.com authentication

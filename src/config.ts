@@ -8,6 +8,11 @@ export interface CameraConfig {
   quality: 'hd' | 'sd';
 }
 
+export interface HomebridgeConfig {
+  motionUrl: string;
+  motionTimeoutMs: number;
+}
+
 export interface AppConfig {
   alarm: {
     username: string;
@@ -19,6 +24,7 @@ export interface AppConfig {
     apiUrl: string;
     rtspPort: number;
   };
+  homebridge?: HomebridgeConfig;
   logging: {
     level: string;
   };
@@ -71,6 +77,12 @@ export function loadConfig(): AppConfig {
     alarm,
     cameras: Array.isArray(fileConfig.cameras) ? fileConfig.cameras : DEFAULT_CONFIG.cameras,
     go2rtc: { ...DEFAULT_CONFIG.go2rtc, ...fileConfig.go2rtc },
+    homebridge: fileConfig.homebridge
+      ? {
+          motionUrl: fileConfig.homebridge.motionUrl,
+          motionTimeoutMs: fileConfig.homebridge.motionTimeoutMs ?? 60_000,
+        }
+      : undefined,
     logging: { ...DEFAULT_CONFIG.logging, ...fileConfig.logging },
   };
 }

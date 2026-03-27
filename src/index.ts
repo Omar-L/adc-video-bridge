@@ -47,6 +47,51 @@ async function main(): Promise<void> {
     log.warn('Event listener error: %s', err.message);
   });
 
+  // Motion webhook to Homebridge
+  if (config.homebridge?.motionUrl) {
+    const { motionUrl, motionTimeoutMs } = config.homebridge;
+    const cameraIdToName = new Map(config.cameras.map((c) => [c.id, c.name]));
+    const motionTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    log.info({ motionUrl }, 'Homebridge motion webhooks enabled');
+
+    const sendMotion = async (cameraName: string, motion: boolean) => {
+      const url = `${motionUrl}/motion/${encodeURIComponent(cameraName)}`;
+      try {
+        await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ motion }),
+        });
+        log.info({ camera: cameraName, motion }, 'Motion webhook sent');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warn({ camera: cameraName }, 'Motion webhook failed: %s', msg);
+      }
+    };
+
+    eventListener.on('motion', (event) => {
+      const cameraName = cameraIdToName.get(event.cameraId);
+      if (!cameraName) return;
+
+      // Clear existing reset timer
+      const existing = motionTimers.get(cameraName);
+      if (existing) clearTimeout(existing);
+
+      // Trigger motion
+      sendMotion(cameraName, true);
+
+      // Schedule reset after timeout
+      motionTimers.set(
+        cameraName,
+        setTimeout(() => {
+          motionTimers.delete(cameraName);
+          sendMotion(cameraName, false);
+        }, motionTimeoutMs),
+      );
+    });
+  }
+
   // Graceful shutdown
   const shutdown = async (signal: string) => {
     log.info({ signal }, 'Shutting down...');

@@ -57,7 +57,7 @@ export function loadConfig(): AppConfig {
   for (const configPath of configPaths) {
     if (existsSync(configPath)) {
       const raw = readFileSync(configPath, 'utf-8');
-      fileConfig = parse(raw) as Partial<AppConfig>;
+      fileConfig = (parse(raw) as Partial<AppConfig>) ?? {};
       break;
     }
   }

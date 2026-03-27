@@ -69,20 +69,22 @@ Token TTL is 180 seconds. The bridge refreshes tokens every 150 seconds, tearing
 
 **Working:**
 - Alarm.com authentication via `node-alarm-dot-com`
-- Camera discovery (`GET /web/api/video/devices/cameras`)
+- Camera discovery CLI (`npx tsx src/discover.ts`)
 - Video token fetching and refresh (150s cycle)
 - End-to-end WebRTC signaling (HELLO/START_SESSION/SDP/ICE)
 - WebRTC connection establishment with STUN/TURN
 - H.264 RTP packet extraction from werift
 - ffmpeg RTSP output to go2rtc
 - Docker container with go2rtc sidecar
-- Verified streaming 1920x1080 H.264 @ 10fps, viewable in VLC
+- Multi-camera streaming (3 cameras verified, 1920x1080 H.264 @ 10fps)
+- Real-time motion detection via ADC WebSocket event stream
+- Motion webhook forwarding to homebridge-camera-ffmpeg
+- HomeKit live view and motion notifications via Homebridge
+- HomeKit Secure Video (HKSV) recording triggered by motion events
 
 **Not yet done:**
-- Multi-camera testing (single camera verified)
-- Deployment to production server
 - go2rtc stream auto-configuration (currently manual in `config/go2rtc.yaml`)
-- HKSV recording support (see [Limitations](#limitations))
+- Audio passthrough
 
 ## Project structure
 
@@ -131,15 +133,6 @@ docker compose -f docker-compose.yml up --build -d
 - ffmpeg — RTP → RTSP transcoding (copy mode, no re-encoding)
 
 ## Limitations
-
-### HKSV recording does not work
-
-Live view in Apple Home works, but HomeKit Secure Video recording does not. The stream does not meet HKSV's requirements:
-
-- **Frame rate** — cameras output 10fps; HKSV requires 15fps or higher
-- **Audio** — no audio track is piped through; HKSV requires AAC-ELD audio
-- **Stream gaps** — the 150s token refresh cycle tears down the WebRTC connection, causing ~1-2 second interruptions
-- **Camera wake delay** — cameras take ~15 seconds to dial in on first connect, so motion events are missed
 
 ### Not a 24/7 stream
 

@@ -118,11 +118,11 @@ src/
 ### Local development
 
 ```bash
-# Install deps (requires node-alarm-dot-com built locally at ../node-alarm-dot-com)
+# Install deps
 npm install
 
 # Create config
-cp config.example.yaml config/config.yaml
+cp config/config.example.yaml config/config.yaml
 # Edit config/config.yaml with your credentials and camera IDs
 
 # Run locally (requires go2rtc running separately)
@@ -132,12 +132,6 @@ npx tsx src/index.ts
 ### Docker
 
 ```bash
-# Node.js and npm are required on the host to build the vendored dependency
-# Ubuntu/Debian: sudo apt install nodejs npm
-
-# Vendor the node-alarm-dot-com dependency
-./scripts/prepare-docker.sh
-
 # Build and run (detached)
 docker compose -f docker-compose.yml up --build -d
 
@@ -156,9 +150,6 @@ docker compose -f docker-compose.yml logs -f
 After pulling new changes or modifying config:
 
 ```bash
-# Re-vendor dependency (only needed if node-alarm-dot-com changed)
-./scripts/prepare-docker.sh
-
 # Rebuild and restart
 docker compose -f docker-compose.yml up --build -d
 

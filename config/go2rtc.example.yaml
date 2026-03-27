@@ -7,7 +7,8 @@ api:
 # Each camera needs a matching stream entry.
 # Run "npx tsx src/discover.ts" to find your camera names.
 streams:
-  driveway: ""
+  front-door: ""
+  # backyard: ""
 
 log:
   level: info

@@ -6,7 +6,7 @@ import type { EndToEndWebrtcConfig } from '../types.js';
 
 const log = createChildLogger('camera-manager');
 
-const RESTART_DELAY_MS = 30_000;
+const BACKOFF_STEPS_MS = [30_000, 60_000, 120_000, 300_000, 600_000];
 
 /**
  * Orchestrates multiple camera stream pipelines.
@@ -15,6 +15,7 @@ const RESTART_DELAY_MS = 30_000;
 export class CameraManager {
   private streams = new Map<string, CameraStream>();
   private activeStarts = new Set<string>();
+  private failureCount = new Map<string, number>();
   private running = false;
 
   constructor(
@@ -91,17 +92,23 @@ export class CameraManager {
       // Silent fetch so dial-in retries don't trigger another handleVideoToken
       const refetchToken = async () => this.tokenManager.fetchVideoTokenSilent(cameraId);
       await stream.start(config, refetchToken);
+
+      this.failureCount.delete(cameraId);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.error({ camera: stream.cameraName }, 'Stream failed after all retries: %s', msg);
 
       if (this.running) {
-        log.info({ camera: stream.cameraName }, 'Will retry in %ds', RESTART_DELAY_MS / 1000);
+        const failures = this.failureCount.get(cameraId) ?? 0;
+        const delay = BACKOFF_STEPS_MS[Math.min(failures, BACKOFF_STEPS_MS.length - 1)];
+        this.failureCount.set(cameraId, failures + 1);
+
+        log.info({ camera: stream.cameraName, delay: delay / 1000, failures: failures + 1 }, 'Will retry in %ds', delay / 1000);
         setTimeout(() => {
           this.activeStarts.delete(cameraId);
           if (!this.running) return;
           this.tokenManager.fetchVideoToken(cameraId);
-        }, RESTART_DELAY_MS);
+        }, delay);
         return;
       }
     }

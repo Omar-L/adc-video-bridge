@@ -7,7 +7,7 @@ import type { EndToEndWebrtcConfig } from '../types.js';
 const log = createChildLogger('token-manager');
 
 const SESSION_REFRESH_MS = 55 * 60 * 1000;
-const VIDEO_TOKEN_REFRESH_MS = 150 * 1000;
+const VIDEO_TOKEN_REFRESH_MS = 600 * 1000;
 const VIDEO_SOURCE_URL =
   'https://www.alarm.com/web/api/video/videoSources/liveVideoHighestResSources/';
 

@@ -13,7 +13,9 @@ import { parseBaseEvent, parseMotionEvent } from './parse-event.js';
 const log = createChildLogger('alarm-events');
 
 const WS_TOKEN_URL = 'https://www.alarm.com/web/api/websockets/token';
-const RECONNECT_DELAY_MS = 30_000;
+const TOKEN_REFRESH_MS = 240_000;
+const BACKOFF_STEPS_MS = [5_000, 10_000, 30_000, 60_000];
+const EXPECTED_CLOSE_CODES: ReadonlySet<number> = new Set([1000, 1008]);
 
 interface WsTokenResponse {
   value: string;
@@ -29,6 +31,8 @@ interface WsTokenResponse {
 export class AlarmEventListener extends EventEmitter {
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private consecutiveFailures = 0;
   private running = false;
 
   constructor(private readonly auth: AlarmAuth) {
@@ -42,11 +46,7 @@ export class AlarmEventListener extends EventEmitter {
 
   stop(): void {
     this.running = false;
-
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
+    this.clearTimers();
 
     if (this.ws) {
       this.ws.removeAllListeners();
@@ -57,7 +57,19 @@ export class AlarmEventListener extends EventEmitter {
     log.info('Stopped');
   }
 
+  private clearTimers(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = null;
+    }
+  }
+
   private async connect(): Promise<void> {
+    this.clearTimers();
     try {
       const tokenResponse = await retry(
         () => this.auth.get<WsTokenResponse>(WS_TOKEN_URL),
@@ -76,6 +88,12 @@ export class AlarmEventListener extends EventEmitter {
 
       this.ws.on('open', () => {
         log.info('WebSocket connected to %s', endpoint);
+        this.consecutiveFailures = 0;
+        this.refreshTimer = setTimeout(() => {
+          this.refreshTimer = null;
+          log.info('Proactive token refresh');
+          this.closeAndReconnect();
+        }, TOKEN_REFRESH_MS);
       });
 
       this.ws.on('message', (data) => {
@@ -90,24 +108,55 @@ export class AlarmEventListener extends EventEmitter {
       this.ws.on('close', (code, reason) => {
         log.warn('WebSocket closed: code=%d reason=%s', code, reason.toString());
         this.ws = null;
-        this.scheduleReconnect();
+        this.clearTimers();
+
+        if (EXPECTED_CLOSE_CODES.has(code)) {
+          this.scheduleReconnect(0);
+        } else {
+          this.scheduleReconnect(this.nextBackoffDelay());
+        }
       });
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       log.error('Failed to connect: %s', error.message);
       this.emit('error', error);
-      this.scheduleReconnect();
+      this.scheduleReconnect(this.nextBackoffDelay());
     }
   }
 
-  private scheduleReconnect(): void {
+  private closeAndReconnect(): void {
     if (!this.running) return;
 
-    log.info('Reconnecting in %ds...', RECONNECT_DELAY_MS / 1000);
+    if (this.ws) {
+      // Remove listeners before close to prevent the close handler from
+      // firing and triggering a duplicate reconnect.
+      this.ws.removeAllListeners();
+      this.ws.close();
+      this.ws = null;
+    }
+    this.connect();
+  }
+
+  private scheduleReconnect(delayMs: number): void {
+    if (!this.running) return;
+
+    if (delayMs === 0) {
+      log.info('Reconnecting immediately...');
+      this.connect();
+      return;
+    }
+
+    log.info('Reconnecting in %ds...', delayMs / 1000);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
-    }, RECONNECT_DELAY_MS);
+    }, delayMs);
+  }
+
+  private nextBackoffDelay(): number {
+    const delay = BACKOFF_STEPS_MS[Math.min(this.consecutiveFailures, BACKOFF_STEPS_MS.length - 1)];
+    this.consecutiveFailures++;
+    return delay;
   }
 
   private handleMessage(raw: string): void {

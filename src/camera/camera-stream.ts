@@ -4,6 +4,7 @@ import { RTCPeerConnection, RTCRtpCodecParameters } from 'werift';
 import { SignalingClient } from '../signaling/signaling-client.js';
 import { createChildLogger } from '../utils/logger.js';
 import { sleep } from '../utils/retry.js';
+import { parseH264Fmtp } from '../utils/sdp.js';
 import type { EndToEndWebrtcConfig, RTCSessionDescriptionLike, RTCIceCandidateLike } from '../types.js';
 
 const log = createChildLogger('camera-stream');
@@ -26,6 +27,7 @@ export class CameraStream {
   private ffmpeg: ChildProcess | null = null;
   private videoSocket: Socket | null = null;
   private videoPort = 0;
+  private h264Fmtp: string | null = null;
   private _state: StreamState = 'idle';
 
   constructor(
@@ -108,8 +110,15 @@ export class CameraStream {
       this.videoSocket = null;
     }
 
+    this.h264Fmtp = null;
     this._state = 'idle';
     log.info({ camera: this.cameraName }, 'Stream stopped');
+  }
+
+  private buildFmtp(): string {
+    if (!this.h264Fmtp) return 'packetization-mode=1';
+    if (this.h264Fmtp.includes('packetization-mode')) return this.h264Fmtp;
+    return `packetization-mode=1;${this.h264Fmtp}`;
   }
 
   private async tryConnect(config: EndToEndWebrtcConfig): Promise<void> {
@@ -314,6 +323,15 @@ export class CameraStream {
     const mediaLines = offer.sdp.split('\n').filter((l: string) => l.startsWith('m=') || l.startsWith('a=rtpmap'));
     log.info({ camera: this.cameraName, mediaLines }, 'SDP offer media lines');
 
+    // Extract H.264 fmtp before setRemoteDescription, which can synchronously
+    // trigger onRemoteTransceiverAdded → subscribeToRtp → startFfmpeg.
+    this.h264Fmtp = parseH264Fmtp(offer.sdp);
+    if (this.h264Fmtp) {
+      log.info({ camera: this.cameraName, h264Fmtp: this.h264Fmtp }, 'Parsed H.264 fmtp from SDP offer');
+    } else {
+      log.warn({ camera: this.cameraName }, 'No H.264 fmtp found in SDP offer, using default');
+    }
+
     await pc.setRemoteDescription({ type: 'offer', sdp: offer.sdp });
 
     const transceivers = pc.getTransceivers();
@@ -366,7 +384,7 @@ export class CameraStream {
       't=0 0',
       `m=video ${this.videoPort} RTP/AVP 96`,
       'a=rtpmap:96 H264/90000',
-      'a=fmtp:96 packetization-mode=1',
+      `a=fmtp:96 ${this.buildFmtp()}`,
     ].join('\r\n') + '\r\n';
 
     const args = [

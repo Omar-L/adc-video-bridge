@@ -187,3 +187,71 @@ describe('CameraStream.start', () => {
     await expect(stream.start(makeConfig(), refetchToken)).rejects.toThrow('auth expired');
   });
 });
+
+describe('CameraStream ffmpeg SDP', () => {
+  let stream: CameraStream;
+  let stdinWrite: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    stream = new CameraStream('cam-123', 'test-camera', 'rtsp://localhost:8554');
+
+    // Allocate a port so startFfmpeg doesn't bail
+    (stream as any).videoPort = 12345;
+
+    // Mock spawn to capture what gets written to ffmpeg's stdin
+    stdinWrite = vi.fn();
+    const { spawn } = await import('node:child_process');
+    vi.mocked(spawn).mockReturnValue({
+      stdin: { write: stdinWrite, end: vi.fn() },
+      stdout: { on: vi.fn() },
+      stderr: { on: vi.fn() },
+      on: vi.fn(),
+      kill: vi.fn(),
+    } as any);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('includes parsed h264Fmtp in ffmpeg SDP', () => {
+    (stream as any).h264Fmtp = 'packetization-mode=1;profile-level-id=4d001f;sprop-parameter-sets=Z00AH+dA==,aO48gA==';
+
+    (stream as any).startFfmpeg();
+
+    expect(stdinWrite).toHaveBeenCalledWith(
+      expect.stringContaining('a=fmtp:96 packetization-mode=1;profile-level-id=4d001f;sprop-parameter-sets=Z00AH+dA==,aO48gA=='),
+    );
+  });
+
+  it('falls back to default fmtp when h264Fmtp is null', () => {
+    (stream as any).h264Fmtp = null;
+
+    (stream as any).startFfmpeg();
+
+    expect(stdinWrite).toHaveBeenCalledWith(
+      expect.stringContaining('a=fmtp:96 packetization-mode=1'),
+    );
+    expect(stdinWrite).not.toHaveBeenCalledWith(
+      expect.stringContaining('profile-level-id'),
+    );
+  });
+
+  it('prepends packetization-mode=1 when missing from camera fmtp', () => {
+    (stream as any).h264Fmtp = 'profile-level-id=4d001f';
+
+    (stream as any).startFfmpeg();
+
+    expect(stdinWrite).toHaveBeenCalledWith(
+      expect.stringContaining('a=fmtp:96 packetization-mode=1;profile-level-id=4d001f'),
+    );
+  });
+
+  it('stop() resets h264Fmtp to null', async () => {
+    (stream as any).h264Fmtp = 'packetization-mode=1;profile-level-id=4d001f';
+
+    await stream.stop();
+
+    expect((stream as any).h264Fmtp).toBeNull();
+  });
+});

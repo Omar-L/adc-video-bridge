@@ -2,6 +2,12 @@
   "name": "adc-video-bridge",
   "version": "0.1.0",
   "description": "Bridges Alarm.com camera streams to local RTSP via WebRTC for HomeKit Secure Video",
+  "author": "Omar Lopez",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Omar-L/adc-video-bridge.git"
+  },
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",

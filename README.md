@@ -140,6 +140,18 @@ cp config/go2rtc.example.yaml config/go2rtc.yaml
 docker compose -f docker-compose.yml up --build -d
 ```
 
+## Environment variables
+
+Credentials can be provided via config file or environment variables. Env vars are recommended for Docker deployments.
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `ADC_USERNAME` | Alarm.com account email | Yes |
+| `ADC_PASSWORD` | Alarm.com account password | Yes |
+| `ADC_MFA_TOKEN` | Two-factor authentication token (from trusted device setup) | No |
+
+Config file values take precedence over env vars. See `config/config.example.yaml` for the full configuration reference.
+
 ## Dependencies
 
 - [node-alarm-dot-com](https://github.com/node-alarm-dot-com/node-alarm-dot-com) — Alarm.com authentication

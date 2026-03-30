@@ -9,7 +9,7 @@ RUN npm ci
 RUN npm run build
 
 # Stage 2: Runtime — based on official go2rtc image (includes ffmpeg + go2rtc)
-FROM alexxit/go2rtc:v1.9.14
+FROM alexxit/go2rtc:1.9.14
 
 # Install Node.js and create app directory with correct permissions
 RUN apk add --no-cache nodejs npm && \

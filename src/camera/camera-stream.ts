@@ -83,6 +83,9 @@ export class CameraStream {
         throw err;
       }
     }
+
+    this._state = 'error';
+    throw new Error(`Camera ${this.cameraName} failed to dial in after ${MAX_DIAL_IN_RETRIES} attempts`);
   }
 
   /** Tear down the entire pipeline. */

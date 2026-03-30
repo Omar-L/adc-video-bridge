@@ -15,32 +15,39 @@ The approach was proven by [kjjohnsen/HomeAssistantADCCameraIntegration](https:/
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────┐
-│           adc-video-bridge (Node.js)         │
-│                                              │
-│  [AlarmAuth] → [TokenManager]                │
-│                     │                        │
-│              [CameraStream] × N              │
-│                │           │                 │
-│  [ADC Signaling WS]    [werift PC]           │
-│   HELLO/SDP/ICE      WebRTC termination      │
-│                          │                   │
-│                    RTP packets                │
-│                          │                   │
-│                   [ffmpeg pipe]               │
-│                    RTSP publish               │
-└──────────────────┬───────────────────────────┘
-                   │ RTSP push
-             ┌─────▼─────┐
-             │  go2rtc    │  (same container)
-             │  RTSP in   │
-             │  RTSP out  │
-             └─────┬─────┘
-                   │ rtsp://localhost:8554/<cam-name>
-         ┌─────────▼──────────┐
-         │ homebridge-camera-  │
-         │ ffmpeg (HKSV)       │
-         └────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│                 adc-video-bridge (Node.js)                │
+│                                                           │
+│  [AlarmAuth] ──→ [TokenManager]                           │
+│       │               │                                   │
+│       │        [CameraManager]                            │
+│       │          │          │                              │
+│       │   [CameraStream] × N                              │
+│       │     │           │                                  │
+│       │  [ADC Signaling WS]    [werift PC]                │
+│       │   HELLO/SDP/ICE      WebRTC termination           │
+│       │                          │                        │
+│       │                    RTP packets                     │
+│       │                          │                        │
+│       │                   [ffmpeg pipe]                    │
+│       │                    RTSP publish ──────────────┐    │
+│       │                                              │    │
+│  [AlarmEventListener]                                │    │
+│   ADC WebSocket event stream                         │    │
+│   motion / sensor / clip events                      │    │
+│       │                                              │    │
+└───────┼──────────────────────────────────────────────┼────┘
+        │ motion webhook                    RTSP push  │
+        │                                ┌─────▼─────┐
+        │                                │  go2rtc    │ (same container)
+        │                                │  RTSP in   │
+        │                                │  RTSP out  │
+        │                                └─────┬─────┘
+        │                                      │ rtsp://localhost:8554/<cam>
+        │                            ┌─────────▼──────────┐
+        └───────────────────────────→│ homebridge-camera-  │
+                                     │ ffmpeg (HKSV)       │
+                                     └────────────────────┘
 ```
 
 ## How the signaling works
@@ -63,21 +70,24 @@ The `liveVideoHighestResSources` API call triggers the camera to wake up and dia
 - Retry with a fresh token after 15 seconds — the camera is now awake
 - Subsequent retries use 10-second intervals
 
-Token TTL is 180 seconds. The bridge refreshes tokens every 150 seconds, tearing down and re-establishing the WebRTC connection each time. This causes a ~1-2 second gap in the RTSP stream.
+The bridge refreshes video tokens every 10 minutes, tearing down and re-establishing the WebRTC connection each time. ADC telemetry confirms there is no server-enforced session timeout — the refresh interval is set conservatively to keep signaling credentials fresh. Each rebuild causes a ~1-2 second gap in the RTSP stream.
 
 ## Current status
 
 **Working:**
 - Alarm.com authentication via `node-alarm-dot-com`
 - Camera discovery CLI (`npx tsx src/discover.ts`)
-- Video token fetching and refresh (150s cycle)
+- Video token fetching and refresh (10-minute cycle)
 - End-to-end WebRTC signaling (HELLO/START_SESSION/SDP/ICE)
 - WebRTC connection establishment with STUN/TURN
 - H.264 RTP packet extraction from werift
+- H.264 fmtp passthrough (profile-level-id, sprop-parameter-sets from camera SDP offer)
 - ffmpeg RTSP output to go2rtc
 - Docker container with go2rtc sidecar
 - Multi-camera streaming (3 cameras verified, 1920x1080 H.264 @ 10fps)
+- Camera dial-in retry with exponential backoff (up to 12 attempts)
 - Real-time motion detection via ADC WebSocket event stream
+- WebSocket event listener with proactive token refresh and exponential backoff on errors
 - Motion webhook forwarding to homebridge-camera-ffmpeg
 - HomeKit live view and motion notifications via Homebridge
 - HomeKit Secure Video (HKSV) recording triggered by motion events
@@ -85,6 +95,7 @@ Token TTL is 180 seconds. The bridge refreshes tokens every 150 seconds, tearing
 **Not yet done:**
 - go2rtc stream auto-configuration (currently manual in `config/go2rtc.yaml`)
 - Audio passthrough
+- Seamless stream handoff (overlap old/new streams during token refresh to eliminate gap)
 
 ## Project structure
 
@@ -93,19 +104,25 @@ src/
 ├── index.ts                  # Entry point, graceful shutdown
 ├── config.ts                 # YAML config loader
 ├── types.ts                  # Shared interfaces
+├── discover.ts               # Camera discovery CLI
 ├── auth/
 │   ├── alarm-auth.ts         # Wraps node-alarm-dot-com login + camera discovery
-│   └── token-manager.ts      # Session refresh (55min) + video token refresh (150s/camera)
+│   └── token-manager.ts      # Session refresh (55min) + video token refresh (10min/camera)
 ├── signaling/
 │   └── signaling-client.ts   # WebSocket: HELLO, START_SESSION, SDP/ICE relay
 ├── camera/
 │   ├── camera-stream.ts      # Per-camera: signaling → werift → RTP → ffmpeg → RTSP
-│   └── camera-manager.ts     # Multi-camera orchestration
+│   └── camera-manager.ts     # Multi-camera orchestration with backoff
+├── events/
+│   ├── alarm-event-listener.ts  # ADC WebSocket event stream with proactive refresh
+│   ├── parse-event.ts        # Event parsing (motion, sensor, clip events)
+│   └── types.ts              # Event type definitions
 ├── go2rtc/
 │   └── go2rtc-api.ts         # go2rtc REST API health checks
 └── utils/
     ├── logger.ts             # pino structured logging
-    └── retry.ts              # Exponential backoff helper
+    ├── retry.ts              # Exponential backoff helper
+    └── sdp.ts                # H.264 fmtp extraction from SDP offers
 ```
 
 ## Setup
@@ -136,17 +153,19 @@ docker compose -f docker-compose.yml up --build -d
 
 ### Not a 24/7 stream
 
-ADC cameras are designed for on-demand live view, not continuous streaming. The bridge holds a perpetual live view session by refreshing tokens every 150 seconds, but this is a workaround — ADC does not support persistent streaming.
+ADC cameras are designed for on-demand live view, not continuous streaming. The bridge holds a perpetual live view session by refreshing tokens every 10 minutes, but this is a workaround — ADC does not officially support persistent streaming. ADC telemetry confirms there is no server-enforced WebRTC session timeout, so the 10-minute interval is conservative.
 
 ### API rate limits
 
 Alarm.com may ban accounts that poll too aggressively. Known safe minimums (from [homebridge-node-alarm-dot-com](https://github.com/node-alarm-dot-com/homebridge-node-alarm-dot-com)):
 
 - **Session re-authentication**: ≥10 minutes (bridge uses 55 min)
-- **Device polling**: ≥60 seconds (bridge uses 150s per camera)
+- **Device polling**: ≥60 seconds (bridge uses 10 min per camera)
 
-With multiple cameras, aggregate API load scales linearly — 3 cameras means a video token API call roughly every 50 seconds.
+With multiple cameras, aggregate API load scales linearly — 3 cameras means a video token API call roughly every 200 seconds.
 
 ## Future exploration
 
-go2rtc has a native [HomeKit output](https://github.com/AlexxIT/go2rtc#homekit) (`homekit` server). This could potentially let go2rtc expose cameras directly to Apple Home without needing homebridge-camera-ffmpeg at all. That's something to explore once the basic stream pipeline is stable and multi-camera support is tested.
+### Native HKSV via go2rtc ([#11](https://github.com/Omar-L/adc-video-bridge/issues/11))
+
+go2rtc PR [AlexxIT/go2rtc#2130](https://github.com/AlexxIT/go2rtc/pull/2130) adds native HomeKit Secure Video support with a standalone `pkg/hksv/` library. This would eliminate the entire Homebridge stack — go2rtc would expose cameras directly to Apple Home with H.264 passthrough (no re-encoding), lower latency, and motion events via a simple HTTP API. See issue [#11](https://github.com/Omar-L/adc-video-bridge/issues/11) for the full analysis and phased rollout plan.

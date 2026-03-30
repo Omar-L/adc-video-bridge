@@ -188,6 +188,68 @@ describe('CameraStream.start', () => {
   });
 });
 
+describe('CameraStream ffmpeg mid-stream exit recovery', () => {
+  let stream: CameraStream;
+  let exitHandler: (code: number | null) => void;
+
+  beforeEach(async () => {
+    stream = new CameraStream('cam-123', 'test-camera', 'rtsp://localhost:8554');
+
+    (stream as any).videoPort = 12345;
+    (stream as any)._state = 'streaming';
+
+    const { spawn } = await import('node:child_process');
+    vi.mocked(spawn).mockReturnValue({
+      stdin: { write: vi.fn(), end: vi.fn() },
+      stdout: { on: vi.fn() },
+      stderr: { on: vi.fn() },
+      on: vi.fn((event: string, handler: any) => {
+        if (event === 'exit') exitHandler = handler;
+      }),
+      kill: vi.fn(),
+    } as any);
+
+    (stream as any).startFfmpeg();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('sets state to error when ffmpeg exits while streaming', () => {
+    exitHandler(1);
+
+    expect(stream.state).toBe('error');
+  });
+
+  it('invokes onUnexpectedExit callback when ffmpeg exits while streaming', () => {
+    const callback = vi.fn();
+    stream.onUnexpectedExit = callback;
+
+    exitHandler(0);
+
+    expect(callback).toHaveBeenCalledOnce();
+  });
+
+  it('does not invoke callback when ffmpeg exits during idle/connecting state', () => {
+    const callback = vi.fn();
+    stream.onUnexpectedExit = callback;
+    (stream as any)._state = 'idle';
+
+    exitHandler(0);
+
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it('does not set state to error when stream is already idle', () => {
+    (stream as any)._state = 'idle';
+
+    exitHandler(0);
+
+    expect(stream.state).toBe('idle');
+  });
+});
+
 describe('CameraStream ffmpeg SDP', () => {
   let stream: CameraStream;
   let stdinWrite: ReturnType<typeof vi.fn>;

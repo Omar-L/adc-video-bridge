@@ -35,6 +35,7 @@ export class CameraManager {
 
     for (const cam of cameras) {
       const stream = new CameraStream(cam.id, cam.name, this.rtspBaseUrl);
+      stream.onUnexpectedExit = () => this.handleUnexpectedExit(cam.id);
       this.streams.set(cam.id, stream);
     }
 
@@ -114,5 +115,16 @@ export class CameraManager {
     }
 
     this.activeStarts.delete(cameraId);
+  }
+
+  private handleUnexpectedExit(cameraId: string): void {
+    if (!this.running) return;
+
+    const stream = this.streams.get(cameraId);
+    const name = stream?.cameraName ?? cameraId;
+    log.warn({ camera: name }, 'Stream died mid-stream, fetching fresh token to recover');
+
+    this.activeStarts.delete(cameraId);
+    this.tokenManager.fetchVideoToken(cameraId);
   }
 }

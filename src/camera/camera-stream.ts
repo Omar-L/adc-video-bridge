@@ -30,6 +30,9 @@ export class CameraStream {
   private h264Fmtp: string | null = null;
   private _state: StreamState = 'idle';
 
+  /** Called when ffmpeg exits unexpectedly while the stream was active. */
+  onUnexpectedExit: (() => void) | null = null;
+
   constructor(
     readonly cameraId: string,
     readonly cameraName: string,
@@ -429,6 +432,12 @@ export class CameraStream {
     this.ffmpeg.on('exit', (code) => {
       log.warn({ camera: this.cameraName, code }, 'ffmpeg exited');
       this.ffmpeg = null;
+
+      if (this._state === 'streaming') {
+        this._state = 'error';
+        log.error({ camera: this.cameraName, code }, 'ffmpeg exited unexpectedly while streaming');
+        this.onUnexpectedExit?.();
+      }
     });
   }
 

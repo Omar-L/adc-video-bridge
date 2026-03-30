@@ -17,6 +17,7 @@ vi.mock('./camera-stream.js', () => ({
     cameraId: _id,
     cameraName: name,
     state: 'idle',
+    onUnexpectedExit: null,
     start: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn().mockResolvedValue(undefined),
   })),
@@ -172,6 +173,37 @@ describe('CameraManager backoff', () => {
     expect(tokenManager.fetchVideoToken).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(tokenManager.fetchVideoToken).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers immediately when ffmpeg exits mid-stream', async () => {
+    await startWithCamera();
+    const stream = getStream();
+
+    // Successful start — stream is active
+    tokenManager.emit('videoToken', 'cam-1', makeConfig());
+    await vi.advanceTimersByTimeAsync(0);
+    tokenManager.fetchVideoToken.mockClear();
+
+    // Simulate ffmpeg dying mid-stream
+    stream.onUnexpectedExit();
+
+    expect(tokenManager.fetchVideoToken).toHaveBeenCalledWith('cam-1');
+  });
+
+  it('does not recover on mid-stream exit after manager is stopped', async () => {
+    await startWithCamera();
+    const stream = getStream();
+
+    tokenManager.emit('videoToken', 'cam-1', makeConfig());
+    await vi.advanceTimersByTimeAsync(0);
+
+    await manager.stop();
+    tokenManager.fetchVideoToken.mockClear();
+
+    // Simulate ffmpeg dying after stop
+    stream.onUnexpectedExit?.();
+
+    expect(tokenManager.fetchVideoToken).not.toHaveBeenCalled();
   });
 
   it('does not retry when manager is stopped', async () => {

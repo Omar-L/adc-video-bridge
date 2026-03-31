@@ -13,15 +13,17 @@ vi.mock('../utils/logger.js', () => ({
 
 // Stub CameraStream so we can control start()/stop()/reconnect() behavior
 vi.mock('./camera-stream.js', () => ({
-  CameraStream: vi.fn().mockImplementation((_id: string, name: string) => ({
-    cameraId: _id,
-    cameraName: name,
-    state: 'idle',
-    onUnexpectedExit: null,
-    start: vi.fn().mockResolvedValue(undefined),
-    stop: vi.fn().mockResolvedValue(undefined),
-    reconnect: vi.fn().mockResolvedValue(undefined),
-  })),
+  CameraStream: vi.fn().mockImplementation(function (_id: string, name: string) {
+    return {
+      cameraId: _id,
+      cameraName: name,
+      state: 'idle',
+      onUnexpectedExit: null,
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      reconnect: vi.fn().mockResolvedValue(undefined),
+    };
+  }),
 }));
 
 import { CameraManager } from './camera-manager.js';

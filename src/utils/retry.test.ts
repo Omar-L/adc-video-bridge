@@ -42,23 +42,25 @@ describe('retry', () => {
   });
 
   it('throws last error after all attempts exhausted', async () => {
-    const fn = vi.fn().mockImplementation(() => Promise.reject(new Error('always fails')));
+    const fn = vi.fn().mockRejectedValue(new Error('always fails'));
 
     const promise = retry(fn, { maxAttempts: 2, baseDelayMs: 100 });
+    const assertion = expect(promise).rejects.toThrow('always fails');
     await vi.advanceTimersByTimeAsync(100);
 
-    await expect(promise).rejects.toThrow('always fails');
+    await assertion;
     expect(fn).toHaveBeenCalledTimes(2);
   });
 
   it('defaults to 3 max attempts', async () => {
-    const fn = vi.fn().mockImplementation(() => Promise.reject(new Error('fail')));
+    const fn = vi.fn().mockRejectedValue(new Error('fail'));
 
     const promise = retry(fn, { baseDelayMs: 100, maxDelayMs: 1000 });
+    const assertion = expect(promise).rejects.toThrow('fail');
     await vi.advanceTimersByTimeAsync(100); // attempt 2
     await vi.advanceTimersByTimeAsync(200); // attempt 3
 
-    await expect(promise).rejects.toThrow('fail');
+    await assertion;
     expect(fn).toHaveBeenCalledTimes(3);
   });
 
@@ -71,13 +73,14 @@ describe('retry', () => {
   });
 
   it('applies exponential backoff capped by maxDelayMs', async () => {
-    const fn = vi.fn().mockImplementation(() => Promise.reject(new Error('fail')));
+    const fn = vi.fn().mockRejectedValue(new Error('fail'));
 
     const promise = retry(fn, {
       maxAttempts: 4,
       baseDelayMs: 100,
       maxDelayMs: 300,
     });
+    const assertion = expect(promise).rejects.toThrow();
 
     // Attempt 1 fails → delay 100ms (100 * 2^0)
     await vi.advanceTimersByTimeAsync(100);
@@ -86,7 +89,7 @@ describe('retry', () => {
     // Attempt 3 fails → delay 300ms (min(400, 300) capped)
     await vi.advanceTimersByTimeAsync(300);
 
-    await expect(promise).rejects.toThrow();
+    await assertion;
     expect(fn).toHaveBeenCalledTimes(4);
   });
 

@@ -87,14 +87,17 @@ export class CameraManager {
 
     // If the stream is already active, do a seamless reconnect (keeps ffmpeg alive)
     if (stream.state === 'streaming') {
+      this.activeStarts.add(cameraId);
       try {
         log.info({ camera: stream.cameraName }, 'Seamless reconnect with fresh token');
         await stream.reconnect(config);
         this.failureCount.delete(cameraId);
+        this.activeStarts.delete(cameraId);
         return;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         log.warn({ camera: stream.cameraName }, 'Reconnect failed (%s), falling back to full restart', msg);
+        this.activeStarts.delete(cameraId);
       }
     }
 

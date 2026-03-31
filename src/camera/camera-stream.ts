@@ -99,6 +99,10 @@ export class CameraStream {
    * rebuilt — the RTSP push to go2rtc is never interrupted.
    */
   async reconnect(config: EndToEndWebrtcConfig): Promise<void> {
+    if (this._state !== 'streaming') {
+      throw new Error(`Cannot reconnect: expected 'streaming', got '${this._state}'`);
+    }
+
     log.info({ camera: this.cameraName }, 'Reconnecting WebRTC (keeping ffmpeg alive)...');
 
     // Tear down token-bound resources only
@@ -113,12 +117,14 @@ export class CameraStream {
     this.signaling = new SignalingClient(this.cameraName);
     this._state = 'connecting';
 
-    // New peer connection
-    this.pc = this.createPeerConnection(config);
-    this.setupPeerConnection();
-
-    // Connect signaling
-    await this.connectSignaling(config);
+    try {
+      this.pc = this.createPeerConnection(config);
+      this.setupPeerConnection();
+      await this.connectSignaling(config);
+    } catch (err) {
+      this._state = 'error';
+      throw err;
+    }
 
     log.info({ camera: this.cameraName }, 'Reconnect complete, waiting for SDP offer...');
 
@@ -356,6 +362,7 @@ export class CameraStream {
     });
 
     pc.connectionStateChange.subscribe((state) => {
+      if (pc !== this.pc) return; // stale PC during reconnect
       log.info({ camera: this.cameraName, connectionState: state }, 'Connection state changed');
       if (state === 'failed' || state === 'disconnected') {
         this._state = 'error';

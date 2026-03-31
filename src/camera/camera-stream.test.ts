@@ -303,6 +303,7 @@ describe('CameraStream.reconnect', () => {
     }) as any);
 
     await expect(stream.reconnect(makeConfig())).rejects.toThrow('signaling failed');
+    expect(stream.state).toBe('error');
   });
 });
 

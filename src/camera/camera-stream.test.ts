@@ -7,14 +7,16 @@ vi.mock('werift', () => ({
 }));
 
 vi.mock('../signaling/signaling-client.js', () => ({
-  SignalingClient: vi.fn().mockImplementation(() => ({
-    on: vi.fn(),
-    removeAllListeners: vi.fn(),
-    close: vi.fn(),
-    connect: vi.fn(),
-    sendAnswer: vi.fn(),
-    sendIceCandidate: vi.fn(),
-  })),
+  SignalingClient: vi.fn().mockImplementation(function () {
+    return {
+      on: vi.fn(),
+      removeAllListeners: vi.fn(),
+      close: vi.fn(),
+      connect: vi.fn(),
+      sendAnswer: vi.fn(),
+      sendIceCandidate: vi.fn(),
+    };
+  }),
 }));
 
 vi.mock('node:dgram', () => ({
@@ -208,16 +210,18 @@ describe('CameraStream.reconnect', () => {
   }
 
   function mockSignalingToSucceed() {
-    vi.mocked(SignalingClient).mockImplementation(() => ({
-      on: vi.fn((event: string, handler: any) => {
-        if (event === 'sessionStarted') setTimeout(handler, 0);
-      }),
-      removeAllListeners: vi.fn(),
-      close: vi.fn(),
-      connect: vi.fn().mockResolvedValue(undefined),
-      sendAnswer: vi.fn(),
-      sendIceCandidate: vi.fn(),
-    }) as any);
+    vi.mocked(SignalingClient).mockImplementation(function () {
+      return {
+        on: vi.fn((event: string, handler: any) => {
+          if (event === 'sessionStarted') setTimeout(handler, 0);
+        }),
+        removeAllListeners: vi.fn(),
+        close: vi.fn(),
+        connect: vi.fn().mockResolvedValue(undefined),
+        sendAnswer: vi.fn(),
+        sendIceCandidate: vi.fn(),
+      } as any;
+    });
   }
 
   it('does not kill ffmpeg or videoSocket during reconnect', async () => {
@@ -264,19 +268,21 @@ describe('CameraStream.reconnect', () => {
 
     setupReconnectMocks(stream);
 
-    vi.mocked(SignalingClient).mockImplementation(() => ({
-      on: vi.fn((event: string, handler: any) => {
-        if (event === 'sessionStarted') {
-          capturedState = stream.state;
-          setTimeout(handler, 0);
-        }
-      }),
-      removeAllListeners: vi.fn(),
-      close: vi.fn(),
-      connect: vi.fn().mockResolvedValue(undefined),
-      sendAnswer: vi.fn(),
-      sendIceCandidate: vi.fn(),
-    }) as any);
+    vi.mocked(SignalingClient).mockImplementation(function () {
+      return {
+        on: vi.fn((event: string, handler: any) => {
+          if (event === 'sessionStarted') {
+            capturedState = stream.state;
+            setTimeout(handler, 0);
+          }
+        }),
+        removeAllListeners: vi.fn(),
+        close: vi.fn(),
+        connect: vi.fn().mockResolvedValue(undefined),
+        sendAnswer: vi.fn(),
+        sendIceCandidate: vi.fn(),
+      } as any;
+    });
 
     await stream.reconnect(makeConfig());
 
@@ -291,16 +297,18 @@ describe('CameraStream.reconnect', () => {
 
     setupReconnectMocks(stream);
 
-    vi.mocked(SignalingClient).mockImplementation(() => ({
-      on: vi.fn((event: string, handler: any) => {
-        if (event === 'error') setTimeout(() => handler(new Error('signaling failed')), 0);
-      }),
-      removeAllListeners: vi.fn(),
-      close: vi.fn(),
-      connect: vi.fn().mockResolvedValue(undefined),
-      sendAnswer: vi.fn(),
-      sendIceCandidate: vi.fn(),
-    }) as any);
+    vi.mocked(SignalingClient).mockImplementation(function () {
+      return {
+        on: vi.fn((event: string, handler: any) => {
+          if (event === 'error') setTimeout(() => handler(new Error('signaling failed')), 0);
+        }),
+        removeAllListeners: vi.fn(),
+        close: vi.fn(),
+        connect: vi.fn().mockResolvedValue(undefined),
+        sendAnswer: vi.fn(),
+        sendIceCandidate: vi.fn(),
+      } as any;
+    });
 
     await expect(stream.reconnect(makeConfig())).rejects.toThrow('signaling failed');
     expect(stream.state).toBe('error');

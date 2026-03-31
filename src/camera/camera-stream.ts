@@ -93,6 +93,38 @@ export class CameraStream {
     throw new Error(`Camera ${this.cameraName} failed to dial in after ${MAX_DIAL_IN_RETRIES} attempts`);
   }
 
+  /**
+   * Reconnect WebRTC with a fresh token while keeping ffmpeg and the UDP
+   * socket alive.  Only the signaling WebSocket and RTCPeerConnection are
+   * rebuilt — the RTSP push to go2rtc is never interrupted.
+   */
+  async reconnect(config: EndToEndWebrtcConfig): Promise<void> {
+    log.info({ camera: this.cameraName }, 'Reconnecting WebRTC (keeping ffmpeg alive)...');
+
+    // Tear down token-bound resources only
+    this.signaling.removeAllListeners();
+    this.signaling.close();
+    if (this.pc) {
+      await this.pc.close().catch(() => {});
+      this.pc = null;
+    }
+
+    // Fresh signaling client
+    this.signaling = new SignalingClient(this.cameraName);
+    this._state = 'connecting';
+
+    // New peer connection
+    this.pc = this.createPeerConnection(config);
+    this.setupPeerConnection();
+
+    // Connect signaling
+    await this.connectSignaling(config);
+
+    log.info({ camera: this.cameraName }, 'Reconnect complete, waiting for SDP offer...');
+
+    this.registerPostSessionHandlers();
+  }
+
   /** Tear down the entire pipeline. */
   async stop(): Promise<void> {
     this.signaling.removeAllListeners();
@@ -131,7 +163,17 @@ export class CameraStream {
     this.videoPort = await this.allocateUdpPort();
     log.info({ camera: this.cameraName, videoPort: this.videoPort }, 'Allocated RTP port');
 
-    this.pc = new RTCPeerConnection({
+    this.pc = this.createPeerConnection(config);
+    this.setupPeerConnection();
+    await this.connectSignaling(config);
+
+    log.info({ camera: this.cameraName }, 'Session started, waiting for SDP offer...');
+
+    this.registerPostSessionHandlers();
+  }
+
+  private createPeerConnection(config: EndToEndWebrtcConfig): RTCPeerConnection {
+    return new RTCPeerConnection({
       iceServers: config.iceServers.flatMap((s) =>
         s.urls.map((url) => ({
           urls: url,
@@ -167,11 +209,11 @@ export class CameraStream {
         ],
       },
     });
+  }
 
-    this.setupPeerConnection();
-
-    // Connect signaling — resolve on SESSION_STARTED, reject on close/error
-    await new Promise<void>((resolve, reject) => {
+  /** Connect signaling — resolve on SESSION_STARTED, reject on close/error. */
+  private connectSignaling(config: EndToEndWebrtcConfig): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
       this.signaling.on('sessionStarted', () => resolve());
 
       this.signaling.on('closed', (_code, reason) => {
@@ -196,9 +238,10 @@ export class CameraStream {
         config.cameraAuthToken,
       ).catch(reject);
     });
+  }
 
-    log.info({ camera: this.cameraName }, 'Session started, waiting for SDP offer...');
-
+  /** Register SDP/ICE/close handlers after session is established. */
+  private registerPostSessionHandlers(): void {
     this.signaling.on('sdpOffer', async (offer) => {
       try {
         await this.handleSdpOffer(offer);
@@ -229,9 +272,11 @@ export class CameraStream {
       if (rtpSubscribed) return;
       rtpSubscribed = true;
 
-      // Start ffmpeg and create the send socket
+      // Start ffmpeg and create the send socket (guards allow reuse on reconnect)
       this.startFfmpeg();
-      this.videoSocket = createSocket('udp4');
+      if (!this.videoSocket) {
+        this.videoSocket = createSocket('udp4');
+      }
 
       track.onReceiveRtp.subscribe((rtp: any) => {
         if (this.videoSocket && this.videoPort) {

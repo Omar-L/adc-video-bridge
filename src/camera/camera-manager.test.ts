@@ -11,7 +11,7 @@ vi.mock('../utils/logger.js', () => ({
   }),
 }));
 
-// Stub CameraStream so we can control start()/stop() behavior
+// Stub CameraStream so we can control start()/stop()/reconnect() behavior
 vi.mock('./camera-stream.js', () => ({
   CameraStream: vi.fn().mockImplementation((_id: string, name: string) => ({
     cameraId: _id,
@@ -20,6 +20,7 @@ vi.mock('./camera-stream.js', () => ({
     onUnexpectedExit: null,
     start: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn().mockResolvedValue(undefined),
+    reconnect: vi.fn().mockResolvedValue(undefined),
   })),
 }));
 
@@ -204,6 +205,63 @@ describe('CameraManager backoff', () => {
     stream.onUnexpectedExit?.();
 
     expect(tokenManager.fetchVideoToken).not.toHaveBeenCalled();
+  });
+
+  it('uses reconnect instead of start when stream is already streaming', async () => {
+    await startWithCamera();
+    const stream = getStream();
+
+    // First token → normal start
+    tokenManager.emit('videoToken', 'cam-1', makeConfig());
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Stream is now active
+    stream.state = 'streaming';
+    stream.start.mockClear();
+
+    // Second token → should use reconnect
+    tokenManager.emit('videoToken', 'cam-1', makeConfig());
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(stream.reconnect).toHaveBeenCalledOnce();
+    expect(stream.start).not.toHaveBeenCalled();
+  });
+
+  it('falls back to start when reconnect fails', async () => {
+    await startWithCamera();
+    const stream = getStream();
+
+    // First token → normal start
+    tokenManager.emit('videoToken', 'cam-1', makeConfig());
+    await vi.advanceTimersByTimeAsync(0);
+
+    stream.state = 'streaming';
+    stream.start.mockClear();
+    stream.reconnect.mockRejectedValueOnce(new Error('reconnect failed'));
+
+    // Second token → reconnect fails, should fall back to start
+    tokenManager.emit('videoToken', 'cam-1', makeConfig());
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(stream.reconnect).toHaveBeenCalledOnce();
+    expect(stream.start).toHaveBeenCalledOnce();
+  });
+
+  it('uses start (not reconnect) when stream is in error state', async () => {
+    await startWithCamera();
+    const stream = getStream();
+
+    tokenManager.emit('videoToken', 'cam-1', makeConfig());
+    await vi.advanceTimersByTimeAsync(0);
+
+    stream.state = 'error';
+    stream.start.mockClear();
+
+    tokenManager.emit('videoToken', 'cam-1', makeConfig());
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(stream.reconnect).not.toHaveBeenCalled();
+    expect(stream.start).toHaveBeenCalledOnce();
   });
 
   it('does not retry when manager is stopped', async () => {

@@ -1,7 +1,5 @@
-alarm:
-  username: "user@email.com"
-  password: "password"
-  mfaToken: ""  # optional, for 2FA bypass
+# Alarm.com credentials belong in .env (or ADC_*_FILE Docker secrets), not in
+# this mounted configuration file. Copy .env.example to .env and protect it.
 
 # Run "npx tsx src/discover.ts" to find your camera IDs and names
 cameras:

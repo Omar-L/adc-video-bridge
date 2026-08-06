@@ -1,8 +1,22 @@
 rtsp:
   listen: ":8554"
+  username: "${GO2RTC_RTSP_USERNAME}"
+  password: "${GO2RTC_RTSP_PASSWORD}"
 
 api:
   listen: ":1984"
+  username: "${GO2RTC_API_USERNAME}"
+  password: "${GO2RTC_API_PASSWORD}"
+  # Local bridge health/API calls bypass auth; remote clients must authenticate.
+  local_auth: false
+
+# These listeners are not used by the bridge. Disabling them reduces the
+# container's network surface.
+webrtc:
+  listen: ""
+
+srtp:
+  listen: ""
 
 # Each camera needs a matching stream entry.
 # Run "npx tsx src/discover.ts" to find your camera names.

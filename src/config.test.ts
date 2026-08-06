@@ -21,6 +21,9 @@ describe('loadConfig', () => {
     delete process.env.ADC_USERNAME;
     delete process.env.ADC_PASSWORD;
     delete process.env.ADC_MFA_TOKEN;
+    delete process.env.ADC_USERNAME_FILE;
+    delete process.env.ADC_PASSWORD_FILE;
+    delete process.env.ADC_MFA_TOKEN_FILE;
   });
 
   afterEach(() => {
@@ -50,6 +53,33 @@ alarm:
     const config = loadConfig();
     expect(config.alarm.username).toBe('file@test.com');
     expect(config.alarm.password).toBe('filepass');
+  });
+
+  it('prefers environment credentials over YAML credentials', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(`
+alarm:
+  username: "file@test.com"
+  password: "filepass"
+`);
+    process.env.ADC_USERNAME = 'env@test.com';
+    process.env.ADC_PASSWORD = 'envpass';
+
+    const config = loadConfig();
+    expect(config.alarm.username).toBe('env@test.com');
+    expect(config.alarm.password).toBe('envpass');
+  });
+
+  it('loads credentials from Docker secret files', () => {
+    process.env.ADC_USERNAME_FILE = '/run/secrets/adc_username';
+    process.env.ADC_PASSWORD_FILE = '/run/secrets/adc_password';
+    mockReadFileSync.mockImplementation((path) =>
+      String(path).endsWith('adc_username') ? 'secret@test.com\n' : 'secret-password\n',
+    );
+
+    const config = loadConfig();
+    expect(config.alarm.username).toBe('secret@test.com');
+    expect(config.alarm.password).toBe('secret-password');
   });
 
   it('applies go2rtc defaults when not in config', () => {
@@ -126,5 +156,48 @@ homebridge:
     process.env.ADC_PASSWORD = 'p';
     const config = loadConfig();
     expect(config.alarm.username).toBe('u');
+  });
+
+  it('rejects unsafe camera stream names', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(`
+cameras:
+  - id: "123-456"
+    name: "../front"
+    quality: "hd"
+`);
+    process.env.ADC_USERNAME = 'u';
+    process.env.ADC_PASSWORD = 'p';
+
+    expect(() => loadConfig()).toThrow('Camera name');
+  });
+
+  it('rejects duplicate camera IDs', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(`
+cameras:
+  - id: "123-456"
+    name: "front"
+    quality: "hd"
+  - id: "123-456"
+    name: "rear"
+    quality: "hd"
+`);
+    process.env.ADC_USERNAME = 'u';
+    process.env.ADC_PASSWORD = 'p';
+
+    expect(() => loadConfig()).toThrow('Duplicate camera ID');
+  });
+
+  it('rejects non-HTTP Homebridge webhook URLs', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(`
+homebridge:
+  motionUrl: "file:///tmp/hook"
+`);
+    process.env.ADC_USERNAME = 'u';
+    process.env.ADC_PASSWORD = 'p';
+
+    expect(() => loadConfig()).toThrow('homebridge.motionUrl must use HTTP or HTTPS');
   });
 });

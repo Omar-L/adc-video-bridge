@@ -8,6 +8,10 @@ dist/
 config/config.yaml
 config/go2rtc.yaml
 .env
+.env.*
+!.env.example
+secrets/*
+!secrets/.gitkeep
 
 # Logs
 *.log

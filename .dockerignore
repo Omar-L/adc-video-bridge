@@ -1,0 +1,15 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+config/config.yaml
+config/go2rtc.yaml
+secrets/
+node_modules/
+dist/
+*.log
+docker.log
+.DS_Store
+.idea/
+.vscode/

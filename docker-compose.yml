@@ -3,8 +3,39 @@ services:
     build: .
     container_name: adc-video-bridge
     restart: unless-stopped
+    init: true
+    # Match the deployment-directory owner so mode-600 configuration and
+    # secret files remain readable without making them world-readable.
+    user: "${ADC_BRIDGE_UID:-1000}:${ADC_BRIDGE_GID:-1000}"
+    env_file:
+      - ${ADC_BRIDGE_ENV_FILE:-.env}
+    environment:
+      NODE_ENV: production
     volumes:
-      - ./config:/app/config
+      - ./config:/app/config:ro
+      - ./secrets:/run/secrets:ro
     ports:
-      - "8554:8554"   # RTSP
-      - "1984:1984"   # go2rtc web UI (optional, for debugging)
+      # Defaults to loopback. Set ADC_BRIDGE_BIND_ADDRESS to the server's LAN
+      # address only when another host must reach HomeKit RTSP/snapshots.
+      - "${ADC_BRIDGE_BIND_ADDRESS:-127.0.0.1}:8554:8554" # authenticated RTSP
+      - "${ADC_BRIDGE_BIND_ADDRESS:-127.0.0.1}:1984:1984" # authenticated snapshots/API
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=128m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--max-time", "3", "http://127.0.0.1:1984/api/streams"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

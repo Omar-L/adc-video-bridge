@@ -12,7 +12,9 @@ export class Go2rtcApi {
   /** Check if go2rtc is reachable. */
   async isHealthy(): Promise<boolean> {
     try {
-      const res = await fetch(`${this.baseUrl}/api/streams`);
+      const res = await fetch(`${this.baseUrl}/api/streams`, {
+        signal: AbortSignal.timeout(5_000),
+      });
       return res.ok;
     } catch {
       return false;
@@ -21,7 +23,9 @@ export class Go2rtcApi {
 
   /** Get the list of active streams. */
   async getStreams(): Promise<Record<string, unknown>> {
-    const res = await fetch(`${this.baseUrl}/api/streams`);
+    const res = await fetch(`${this.baseUrl}/api/streams`, {
+      signal: AbortSignal.timeout(5_000),
+    });
     if (!res.ok) throw new Error(`go2rtc API error: ${res.status}`);
     return res.json() as Promise<Record<string, unknown>>;
   }

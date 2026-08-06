@@ -56,11 +56,24 @@ export class SignalingClient extends EventEmitter {
     }
 
     this.state = 'connecting';
-    const wsUrl = `${signallingServerUrl}/${signallingServerToken}`;
+    let baseUrl: URL;
+    try {
+      baseUrl = new URL(signallingServerUrl);
+    } catch {
+      throw new Error('Alarm.com returned an invalid signaling server URL');
+    }
+    if (baseUrl.protocol !== 'wss:') {
+      throw new Error('Alarm.com signaling must use an encrypted WSS connection');
+    }
+
+    const wsUrl = `${signallingServerUrl.replace(/\/$/, '')}/${signallingServerToken}`;
     log.info({ camera: this.cameraName }, 'Connecting to signaling server...');
 
     return new Promise<void>((resolve, reject) => {
-      this.ws = new WebSocket(wsUrl);
+      this.ws = new WebSocket(wsUrl, {
+        handshakeTimeout: 30_000,
+        maxPayload: 1024 * 1024,
+      });
 
       const timeout = setTimeout(() => {
         reject(new Error('Signaling connection timeout (30s)'));
@@ -168,14 +181,19 @@ export class SignalingClient extends EventEmitter {
     try {
       data = JSON.parse(msg);
     } catch {
-      log.warn({ camera: this.cameraName, msg }, 'Unrecognized message');
+      log.warn({ camera: this.cameraName, messageLength: msg.length }, 'Unrecognized message');
+      return;
+    }
+
+    if (!data || typeof data !== 'object') {
+      log.warn({ camera: this.cameraName }, 'Unexpected signaling message type');
       return;
     }
 
     if (data.sdp?.type === 'offer') {
       this.remoteId = data.from;
       this.localId = data.to;
-      log.info({ camera: this.cameraName, from: this.remoteId }, 'Received SDP offer');
+      log.info({ camera: this.cameraName }, 'Received SDP offer');
       this.emit('sdpOffer', data.sdp as RTCSessionDescriptionLike, data.from, data.to);
       return;
     }
@@ -186,7 +204,10 @@ export class SignalingClient extends EventEmitter {
       return;
     }
 
-    log.debug({ camera: this.cameraName, data }, 'Unhandled JSON message');
+    log.debug(
+      { camera: this.cameraName, keys: Object.keys(data).slice(0, 20) },
+      'Unhandled JSON message',
+    );
   }
 }
 

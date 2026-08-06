@@ -130,16 +130,36 @@ export class TokenManager extends EventEmitter {
 
     const topAttrs = body?.data?.attributes ?? {};
     const iceServersRaw = topAttrs.iceServers;
-    const iceServers = iceServersRaw ? JSON.parse(iceServersRaw) : [];
+    let iceServers: EndToEndWebrtcConfig['iceServers'] = [];
+    if (Array.isArray(iceServersRaw)) {
+      iceServers = iceServersRaw;
+    } else if (typeof iceServersRaw === 'string' && iceServersRaw) {
+      try {
+        const parsed = JSON.parse(iceServersRaw);
+        if (Array.isArray(parsed)) iceServers = parsed;
+      } catch {
+        throw new Error('Alarm.com returned invalid ICE server configuration');
+      }
+    }
 
     const included: any[] = body?.included ?? [];
     const e2eInfo = included.find(
       (inc: any) => inc.type === 'video/videoSources/endToEndWebrtcConnectionInfo',
     );
 
-    if (!e2eInfo) return null;
+    if (!e2eInfo?.attributes) return null;
 
     const attrs = e2eInfo.attributes;
+    if (
+      typeof attrs.signallingServerUrl !== 'string' ||
+      typeof attrs.signallingServerToken !== 'string' ||
+      typeof attrs.cameraAuthToken !== 'string' ||
+      !attrs.signallingServerUrl ||
+      !attrs.signallingServerToken ||
+      !attrs.cameraAuthToken
+    ) {
+      throw new Error('Alarm.com returned incomplete end-to-end WebRTC configuration');
+    }
     return {
       signallingServerUrl: attrs.signallingServerUrl,
       signallingServerToken: attrs.signallingServerToken,

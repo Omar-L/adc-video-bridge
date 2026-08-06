@@ -83,8 +83,19 @@ export class AlarmEventListener extends EventEmitter {
         throw new Error('Invalid WebSocket token response');
       }
 
-      const wsUrl = `${endpoint}?auth=${token}`;
-      this.ws = new WebSocket(wsUrl);
+      const wsUrl = new URL(endpoint);
+      if (wsUrl.protocol !== 'wss:') {
+        throw new Error('Alarm.com event endpoint must use an encrypted WSS connection');
+      }
+      // Assign the raw query rather than using searchParams.set(). The token is
+      // already a URL-encoded querystring (~600 chars of %XX escapes, & and =),
+      // so encoding it a second time turns every % into %25 and Alarm.com
+      // rejects the handshake with HTTP 401.
+      wsUrl.search = `auth=${token}`;
+      this.ws = new WebSocket(wsUrl.toString(), {
+        handshakeTimeout: 30_000,
+        maxPayload: 1024 * 1024,
+      });
 
       this.ws.on('open', () => {
         log.info('WebSocket connected to %s', endpoint);
@@ -164,7 +175,7 @@ export class AlarmEventListener extends EventEmitter {
     try {
       msg = JSON.parse(raw);
     } catch {
-      log.warn('Non-JSON message: %s', raw.slice(0, 200));
+      log.warn({ messageLength: raw.length }, 'Non-JSON event message');
       return;
     }
 

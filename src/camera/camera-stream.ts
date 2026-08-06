@@ -258,7 +258,7 @@ export class CameraStream {
     });
 
     this.signaling.on('iceCandidate', async (candidate) => {
-      log.info({ camera: this.cameraName, candidate: candidate.candidate }, 'Remote ICE candidate');
+      log.debug({ camera: this.cameraName }, 'Remote ICE candidate received');
       await this.handleRemoteIceCandidate(candidate);
     });
 
@@ -345,7 +345,8 @@ export class CameraStream {
     });
 
     pc.onIceCandidate.subscribe((candidate) => {
-      log.info({ camera: this.cameraName, candidate: candidate.candidate }, 'Local ICE candidate');
+      if (!candidate) return;
+      log.debug({ camera: this.cameraName }, 'Local ICE candidate generated');
       this.signaling.sendIceCandidate({
         candidate: candidate.candidate,
         sdpMid: candidate.sdpMid ?? null,

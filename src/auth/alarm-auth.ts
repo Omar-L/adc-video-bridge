@@ -14,6 +14,7 @@ const CAMERAS_URL = 'https://www.alarm.com/web/api/video/devices/cameras';
 export class AlarmAuth {
   private auth: AuthOpts | null = null;
   private lastLoginAt = 0;
+  private authenticateInFlight: Promise<void> | null = null;
 
   constructor(
     private readonly username: string,
@@ -31,13 +32,27 @@ export class AlarmAuth {
 
   /** Force a fresh login. */
   async authenticate(): Promise<void> {
+    if (this.authenticateInFlight) return this.authenticateInFlight;
+
+    this.authenticateInFlight = this.performAuthentication();
+    try {
+      await this.authenticateInFlight;
+    } finally {
+      this.authenticateInFlight = null;
+    }
+  }
+
+  private async performAuthentication(): Promise<void> {
     log.info('Logging in to Alarm.com...');
     this.auth = await retry(
       () => login(this.username, this.password, this.mfaToken),
       { maxAttempts: 3, label: 'login' },
     );
     this.lastLoginAt = Date.now();
-    log.info({ systems: this.auth.systems }, 'Login successful');
+    const systemCount = Array.isArray(this.auth.systems)
+      ? this.auth.systems.length
+      : Object.keys(this.auth.systems ?? {}).length;
+    log.info({ systemCount }, 'Login successful');
   }
 
   /** Check if session is likely still valid (logged in < 55 minutes ago). */

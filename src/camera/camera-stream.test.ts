@@ -444,3 +444,87 @@ describe('CameraStream ffmpeg SDP', () => {
     expect((stream as any).h264Fmtp).toBeNull();
   });
 });
+
+/**
+ * SESSION_STARTED means the signalling handshake was accepted, not that video
+ * is flowing. Without a watchdog, a session that negotiates and then delivers
+ * nothing resolves start() successfully — CameraManager then clears
+ * failureCount and, because retries are only scheduled from its catch block,
+ * schedules nothing. The camera stops silently with state stuck at
+ * 'connecting'.
+ */
+describe('CameraStream media watchdog', () => {
+  let stream: CameraStream;
+
+  beforeEach(() => {
+    stream = new CameraStream('cam-1', 'test-camera', 'rtsp://localhost:8554');
+    vi.spyOn(stream as any, 'allocateUdpPort').mockResolvedValue(12345);
+    vi.spyOn(stream as any, 'createPeerConnection').mockReturnValue({});
+    vi.spyOn(stream as any, 'setupPeerConnection').mockImplementation(() => {});
+    vi.spyOn(stream as any, 'connectSignaling').mockResolvedValue(undefined);
+    vi.spyOn(stream as any, 'registerPostSessionHandlers').mockImplementation(() => {});
+    vi.spyOn(stream, 'stop').mockImplementation(async () => {
+      (stream as any)._state = 'idle';
+      (stream as any).settleMedia = null;
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('rejects when the handshake succeeds but no track ever arrives', async () => {
+    vi.useFakeTimers();
+    const attempt = (stream as any).tryConnect(makeConfig());
+    const assertion = expect(attempt).rejects.toThrow(/no media within/);
+    await vi.advanceTimersByTimeAsync(21_000);
+    await assertion;
+  });
+
+  it('leaves state at error, not connecting, after a media timeout', async () => {
+    vi.useFakeTimers();
+    const attempt = (stream as any).tryConnect(makeConfig()).catch(() => {});
+    await vi.advanceTimersByTimeAsync(21_000);
+    await attempt;
+    expect(stream.state).toBe('error');
+  });
+
+  /**
+   * Positive control. Without it, a watchdog that ALWAYS rejected would pass
+   * both tests above.
+   */
+  it('resolves when media arrives before the timeout', async () => {
+    vi.useFakeTimers();
+    const attempt = (stream as any).tryConnect(makeConfig());
+
+    for (let i = 0; i < 50 && !(stream as any).settleMedia; i++) {
+      await Promise.resolve();
+    }
+    expect((stream as any).settleMedia, 'watchdog was never armed').not.toBeNull();
+
+    // Goes through markStreaming — the real transition the RTP subscription
+    // uses. Calling settleMedia() directly would pass even if that call site
+    // were removed, which is the mutation this test exists to catch.
+    (stream as any).markStreaming('test');
+    await expect(attempt).resolves.toBeUndefined();
+    expect(stream.state).toBe('streaming');
+  });
+
+  it('resolves immediately when the track beat the wait', async () => {
+    // The RTP subscription can set 'streaming' before awaitMedia is reached; a
+    // watchdog that missed that race would fail a healthy stream.
+    (stream as any)._state = 'streaming';
+    await expect((stream as any).awaitMedia()).resolves.toBeUndefined();
+  });
+
+  it('does not let a later track settle a waiter that stop() abandoned', async () => {
+    vi.useFakeTimers();
+    const pending = (stream as any).awaitMedia();
+    const guard = expect(pending).rejects.toThrow(/no media/);
+    await stream.stop();
+    expect((stream as any).settleMedia).toBeNull();
+    await vi.advanceTimersByTimeAsync(21_000);
+    await guard;
+  });
+});

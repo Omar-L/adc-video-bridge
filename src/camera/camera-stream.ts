@@ -9,6 +9,22 @@ import type { EndToEndWebrtcConfig, RTCSessionDescriptionLike, RTCIceCandidateLi
 
 const log = createChildLogger('camera-stream');
 
+/**
+ * How long a negotiated session may stay silent before the attempt is failed.
+ *
+ * 🔴 `SESSION_STARTED` means the signalling handshake was accepted, NOT that
+ * video is flowing. Without this, a session that negotiates and then never
+ * delivers a track resolves `start()` successfully — so `CameraManager` clears
+ * `failureCount` and, because retries are only scheduled from its `catch`,
+ * schedules nothing. The camera stops silently: no error, no retry, backoff
+ * ladder reset, and `state` stuck at 'connecting' forever.
+ *
+ * Generous on purpose: ADC cameras wake on demand and the first packets can lag
+ * the handshake by several seconds. Too short turns a slow camera into a retry
+ * storm against an API that rate-limits.
+ */
+const MEDIA_TIMEOUT_MS = 20_000;
+
 const MAX_DIAL_IN_RETRIES = 12;
 const DIAL_IN_RETRY_DELAY_MS = 10_000;
 const INITIAL_WAKE_DELAY_MS = 5_000;
@@ -32,6 +48,13 @@ export class CameraStream {
 
   /** Called when ffmpeg exits unexpectedly while the stream was active. */
   onUnexpectedExit: (() => void) | null = null;
+
+  /**
+   * Resolves the media watchdog; non-null only while `tryConnect()` waits.
+   * Cleared by `stop()` too — a waiter surviving a stop would be settled by a
+   * LATER attempt's track, passing an attempt that produced nothing itself.
+   */
+  private settleMedia: (() => void) | null = null;
 
   constructor(
     readonly cameraId: string,
@@ -152,6 +175,7 @@ export class CameraStream {
     }
 
     this.h264Fmtp = null;
+    this.settleMedia = null;
     this._state = 'idle';
     log.info({ camera: this.cameraName }, 'Stream stopped');
   }
@@ -176,6 +200,60 @@ export class CameraStream {
     log.info({ camera: this.cameraName }, 'Session started, waiting for SDP offer...');
 
     this.registerPostSessionHandlers();
+
+    // 🔴 Resolving here would report success for a session that has negotiated
+    // but delivered nothing. Wait for actual media, and fail the attempt if it
+    // never arrives so CameraManager's retry path runs.
+    try {
+      await this.awaitMedia();
+    } catch (err) {
+      // stop() FIRST, then 'error' — stop() sets 'idle', so the reverse order
+      // discards the error state. It also tears down the dead peer connection,
+      // ffmpeg and socket that a timeout would otherwise leak once per retry.
+      await this.stop();
+      this._state = 'error';
+      throw err;
+    }
+  }
+
+  /**
+   * The single transition into 'streaming'.
+   *
+   * Kept as one method so the state change and the watchdog release cannot
+   * drift apart: an RTP path that set the state without settling the waiter
+   * would time out a stream that is demonstrably working.
+   */
+  private markStreaming(source: string): void {
+    this._state = 'streaming';
+    this.settleMedia?.();
+    log.info({ camera: this.cameraName, source }, 'Video streaming active');
+  }
+
+  /**
+   * Wait for the session to actually deliver media.
+   *
+   * Resolves immediately if a track already arrived: the RTP subscription can
+   * fire before this is reached, and a watchdog that missed that race would
+   * fail a perfectly healthy stream.
+   */
+  private awaitMedia(): Promise<void> {
+    if (this._state === 'streaming') return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.settleMedia = null;
+        reject(
+          new Error(
+            `no media within ${MEDIA_TIMEOUT_MS / 1000}s of SESSION_STARTED — ` +
+              'the signalling handshake succeeded but no track arrived',
+          ),
+        );
+      }, MEDIA_TIMEOUT_MS);
+      this.settleMedia = () => {
+        clearTimeout(timer);
+        this.settleMedia = null;
+        resolve();
+      };
+    });
   }
 
   private createPeerConnection(config: EndToEndWebrtcConfig): RTCPeerConnection {
@@ -297,8 +375,7 @@ export class CameraStream {
         }
       });
 
-      this._state = 'streaming';
-      log.info({ camera: this.cameraName, source }, 'Video streaming active');
+      this.markStreaming(source);
     };
 
     // Method 1: onRemoteTransceiverAdded — earliest possible, receiver may not exist yet

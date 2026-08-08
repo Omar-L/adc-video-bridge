@@ -123,8 +123,14 @@ async function main(): Promise<void> {
 
   // Periodic status logging
   statusTimer = setInterval(() => {
-    const status = cameraManager.getStatus();
-    log.info({ streams: status }, 'Stream status');
+    const streams = cameraManager.getStatus();
+    // The event circuit is only worth a field when it is open; a healthy one
+    // would be noise on every line.
+    if (eventListener.circuitState === 'open') {
+      log.info({ streams, eventCircuit: 'open' }, 'Stream status');
+    } else {
+      log.info({ streams }, 'Stream status');
+    }
   }, 60_000);
 }
 

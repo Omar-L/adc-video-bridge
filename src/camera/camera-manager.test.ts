@@ -45,6 +45,7 @@ function createTokenManagerStub() {
     stop: vi.fn(),
     fetchVideoToken: vi.fn().mockResolvedValue(null),
     fetchVideoTokenSilent: vi.fn().mockResolvedValue(null),
+    circuitState: vi.fn().mockReturnValue('closed' as const),
   });
   return stub as unknown as TokenManager & typeof stub;
 }
@@ -123,20 +124,20 @@ describe('CameraManager backoff', () => {
     expect(tokenManager.fetchVideoToken).toHaveBeenCalledTimes(1);
   });
 
-  it('caps delay at 10 minutes after many failures', async () => {
+  it('caps the ladder delay at 10 minutes on its last rung', async () => {
     await startWithCamera();
     const stream = getStream();
     stream.start.mockRejectedValue(new Error('camera offline'));
 
-    // Run through 5+ failures to exceed the backoff steps array
-    for (let i = 0; i < 6; i++) {
+    // Failures 1-4 walk the ladder: 30s, 60s, 120s, 300s.
+    for (const delay of [30_000, 60_000, 120_000, 300_000]) {
       tokenManager.emit('videoToken', 'cam-1', makeConfig());
       await vi.advanceTimersByTimeAsync(0);
-      tokenManager.fetchVideoToken.mockClear();
-      await vi.advanceTimersByTimeAsync(600_000); // 10 min max
+      await vi.advanceTimersByTimeAsync(delay);
     }
 
-    // 7th failure should still be capped at 10 minutes
+    // Failure 5 lands on the clamp. The circuit opens on failure 6, so this is
+    // the only rung where the 10-minute cap is the delay actually used.
     tokenManager.emit('videoToken', 'cam-1', makeConfig());
     await vi.advanceTimersByTimeAsync(0);
     tokenManager.fetchVideoToken.mockClear();
@@ -264,6 +265,111 @@ describe('CameraManager backoff', () => {
 
     expect(stream.reconnect).not.toHaveBeenCalled();
     expect(stream.start).toHaveBeenCalledOnce();
+  });
+
+  describe('circuit breaker', () => {
+    const LADDER_MS = [30_000, 60_000, 120_000, 300_000, 600_000];
+    const FIVE_MIN = 5 * 60_000;
+
+    /** Make the stub behave like the real fetch: a usable token is emitted. */
+    function autoEmitTokens() {
+      tokenManager.fetchVideoToken.mockImplementation(async (id: string) => {
+        const config = makeConfig();
+        tokenManager.emit('videoToken', id, config);
+        return config;
+      });
+    }
+
+    /**
+     * Walk the ladder to its end, which is six failures and opens the circuit,
+     * then consume `probes` further probes on the escalating cooldown.
+     */
+    async function driveUntilOpen(probes = 0) {
+      const cooldowns = [FIVE_MIN, 15 * 60_000, 30 * 60_000];
+      tokenManager.emit('videoToken', 'cam-1', makeConfig());
+      await vi.advanceTimersByTimeAsync(0);
+      for (const delay of LADDER_MS) await vi.advanceTimersByTimeAsync(delay);
+      for (let i = 0; i < probes; i++) await vi.advanceTimersByTimeAsync(cooldowns[i]);
+    }
+
+    it('opens once the ladder is exhausted and says so in the status line', async () => {
+      autoEmitTokens();
+      await startWithCamera();
+      getStream().start.mockRejectedValue(new Error('camera offline'));
+
+      await driveUntilOpen();
+
+      expect(manager.getStatus()).toEqual({ driveway: 'idle (circuit open)' });
+    });
+
+    it('collapses the retry rate: 6 attempts/hour on the ladder, 3 once open', async () => {
+      autoEmitTokens();
+      await startWithCamera();
+      const stream = getStream();
+      stream.start.mockRejectedValue(new Error('camera offline'));
+
+      await driveUntilOpen();
+      stream.start.mockClear();
+
+      await vi.advanceTimersByTimeAsync(60 * 60_000);
+
+      // Probes at +5m, +20m, +50m. The saturated ladder would have retried
+      // every 10 minutes, forever, and never stopped.
+      expect(stream.start).toHaveBeenCalledTimes(3);
+    });
+
+    it('bounds the mid-stream recovery path, which has no backoff of its own', async () => {
+      autoEmitTokens();
+      await startWithCamera();
+      const stream = getStream();
+      stream.start.mockRejectedValue(new Error('camera offline'));
+
+      await driveUntilOpen(1);
+      stream.start.mockClear();
+
+      // handleUnexpectedExit refetches immediately — no ladder, no delay. With
+      // the next probe 15 minutes out, the circuit is the only thing stopping
+      // a dying ffmpeg from hammering Alarm.com.
+      stream.onUnexpectedExit();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(stream.start).not.toHaveBeenCalled();
+    });
+
+    it('closes itself on the first successful probe, with no restart needed', async () => {
+      autoEmitTokens();
+      await startWithCamera();
+      const stream = getStream();
+      stream.start.mockRejectedValue(new Error('camera offline'));
+
+      await driveUntilOpen();
+
+      // A camera demoted by a weak link recovers on its own once the link
+      // improves, with nothing restarting the bridge, so the circuit has to
+      // notice recovery by itself.
+      stream.start.mockResolvedValue(undefined);
+      await vi.advanceTimersByTimeAsync(FIVE_MIN);
+
+      expect(manager.getStatus()).toEqual({ driveway: 'idle' });
+
+      // And the fast ladder is available again from its first rung.
+      stream.start.mockRejectedValue(new Error('camera offline'));
+      tokenManager.emit('videoToken', 'cam-1', makeConfig());
+      await vi.advanceTimersByTimeAsync(0);
+      stream.start.mockClear();
+
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(stream.start).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(stream.start).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports an open token circuit even when the stream circuit is closed', async () => {
+      await startWithCamera();
+      tokenManager.circuitState.mockReturnValue('open');
+
+      expect(manager.getStatus()).toEqual({ driveway: 'idle (circuit open)' });
+    });
   });
 
   it('does not retry when manager is stopped', async () => {

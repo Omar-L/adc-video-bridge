@@ -1,5 +1,6 @@
 import { createChildLogger } from '../utils/logger.js';
 import { TokenManager } from '../auth/token-manager.js';
+import { CircuitBreaker } from '../utils/circuit-breaker.js';
 import { CameraStream } from './camera-stream.js';
 import type { CameraConfig } from '../config.js';
 import type { EndToEndWebrtcConfig } from '../types.js';
@@ -7,6 +8,14 @@ import type { EndToEndWebrtcConfig } from '../types.js';
 const log = createChildLogger('camera-manager');
 
 const BACKOFF_STEPS_MS = [30_000, 60_000, 120_000, 300_000, 600_000];
+/**
+ * One failure per rung plus one: the ladder is walked to its 10-minute cap and
+ * applied once before the circuit opens, ~18 minutes into a camera that will
+ * not start. This is the least urgent of the three loops — its own cap already
+ * bounds it to ~6 attempts/hour, and a failure here often means one sick camera
+ * rather than an Alarm.com outage.
+ */
+export const STREAM_FAILURE_THRESHOLD = BACKOFF_STEPS_MS.length + 1;
 
 /**
  * Orchestrates multiple camera stream pipelines.
@@ -16,6 +25,7 @@ export class CameraManager {
   private streams = new Map<string, CameraStream>();
   private activeStarts = new Set<string>();
   private failureCount = new Map<string, number>();
+  private breakers = new Map<string, CircuitBreaker>();
   private running = false;
 
   constructor(
@@ -67,7 +77,11 @@ export class CameraManager {
   getStatus(): Record<string, string> {
     const status: Record<string, string> = {};
     for (const [id, stream] of this.streams) {
-      status[stream.cameraName] = stream.state;
+      // Surface a paused loop in the periodic status line, so an operator
+      // reading the logs sees why an idle camera is not being retried.
+      const paused =
+        this.breakers.get(id)?.state === 'open' || this.tokenManager.circuitState(id) === 'open';
+      status[stream.cameraName] = paused ? `${stream.state} (circuit open)` : stream.state;
     }
     return status;
   }
@@ -85,6 +99,8 @@ export class CameraManager {
       return;
     }
 
+    const breaker = this.breakerFor(cameraId);
+
     // If the stream is already active, do a seamless reconnect (keeps ffmpeg alive)
     if (stream.state === 'streaming') {
       this.activeStarts.add(cameraId);
@@ -92,6 +108,7 @@ export class CameraManager {
         log.info({ camera: stream.cameraName }, 'Seamless reconnect with fresh token');
         await stream.reconnect(config);
         this.failureCount.delete(cameraId);
+        breaker.recordSuccess();
         this.activeStarts.delete(cameraId);
         return;
       } catch (err) {
@@ -99,6 +116,14 @@ export class CameraManager {
         log.warn({ camera: stream.cameraName }, 'Reconnect failed (%s), falling back to full restart', msg);
         this.activeStarts.delete(cameraId);
       }
+    }
+
+    // A token can arrive from the 600s refresh timer as well as from the retry
+    // ladder below, so the ladder's delay alone does not bound how often a
+    // hopeless start is attempted. The circuit does.
+    if (!breaker.tryAttempt()) {
+      log.debug({ camera: stream.cameraName }, 'Stream start suppressed — circuit open');
+      return;
     }
 
     this.activeStarts.add(cameraId);
@@ -111,13 +136,18 @@ export class CameraManager {
       await stream.start(config, refetchToken);
 
       this.failureCount.delete(cameraId);
+      breaker.recordSuccess();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.error({ camera: stream.cameraName }, 'Stream failed after all retries: %s', msg);
+      breaker.recordFailure(msg);
 
       if (this.running) {
         const failures = this.failureCount.get(cameraId) ?? 0;
-        const delay = BACKOFF_STEPS_MS[Math.min(failures, BACKOFF_STEPS_MS.length - 1)];
+        const delay =
+          breaker.state === 'open'
+            ? breaker.retryAfterMs()
+            : BACKOFF_STEPS_MS[Math.min(failures, BACKOFF_STEPS_MS.length - 1)];
         this.failureCount.set(cameraId, failures + 1);
 
         log.info({ camera: stream.cameraName, delay: delay / 1000, failures: failures + 1 }, 'Will retry in %ds', delay / 1000);
@@ -131,6 +161,18 @@ export class CameraManager {
     }
 
     this.activeStarts.delete(cameraId);
+  }
+
+  private breakerFor(cameraId: string): CircuitBreaker {
+    let breaker = this.breakers.get(cameraId);
+    if (!breaker) {
+      breaker = new CircuitBreaker({
+        label: `stream:${cameraId}`,
+        failureThreshold: STREAM_FAILURE_THRESHOLD,
+      });
+      this.breakers.set(cameraId, breaker);
+    }
+    return breaker;
   }
 
   private handleUnexpectedExit(cameraId: string): void {

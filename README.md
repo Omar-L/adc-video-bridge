@@ -86,6 +86,7 @@ The bridge refreshes video tokens every 10 minutes, tearing down and re-establis
 - Docker container with go2rtc sidecar
 - Multi-camera streaming (3 cameras verified, 1920x1080 H.264 @ 10fps)
 - Camera dial-in retry with exponential backoff (up to 12 attempts)
+- Circuit breakers on all three Alarm.com retry loops (see [Retry limits](#retry-limits))
 - Real-time motion detection via ADC WebSocket event stream
 - WebSocket event listener with proactive token refresh and exponential backoff on errors
 - Motion webhook forwarding to homebridge-camera-ffmpeg
@@ -120,6 +121,7 @@ src/
 ├── go2rtc/
 │   └── go2rtc-api.ts         # go2rtc REST API health checks
 └── utils/
+    ├── circuit-breaker.ts    # Pauses a retry loop that is getting nowhere
     ├── logger.ts             # pino structured logging
     ├── retry.ts              # Exponential backoff helper
     └── sdp.ts                # H.264 fmtp extraction from SDP offers
@@ -175,6 +177,25 @@ Alarm.com may ban accounts that poll too aggressively. Known safe minimums (from
 - **Device polling**: ≥60 seconds (bridge uses 10 min per camera)
 
 With multiple cameras, aggregate API load scales linearly — 3 cameras means a video token API call roughly every 200 seconds.
+
+### Retry limits
+
+Exponential backoff bounds the *rate* between attempts but not the *duration* of
+attempting: a saturated ladder is still an infinite loop. Each of the three
+Alarm.com retry loops — the video token poll, the stream retry ladder, and the
+event WebSocket — is therefore wrapped in a circuit breaker. After a run of
+consecutive failures the loop pauses, logs once at `error`, and continues only as
+occasional probes on an escalating cooldown (5 min → 15 min → 30 min → 1 hour,
+then hourly). It probes indefinitely and closes on the first success, so recovery
+needs no restart.
+
+An open circuit appears in the periodic status line as `(circuit open)` next to
+the affected camera, or as `eventCircuit: open` for the event stream.
+
+The breaker treats "did not produce a usable result" as the failure, not "threw".
+Alarm.com answers a camera it cannot reach with HTTP 200 and `errorEnum: 0`, and
+simply omits the WebRTC block — so a breaker counting exceptions would sit closed
+through exactly the outage it exists for.
 
 ## Future exploration
 

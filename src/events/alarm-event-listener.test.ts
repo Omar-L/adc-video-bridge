@@ -48,6 +48,9 @@ import type { AlarmAuth } from '../auth/alarm-auth.js';
 type AuthStub = ReturnType<typeof createAuthStub>;
 
 const TOKEN_REFRESH_MS = 240_000;
+/** The listener's own backoff ladder — five rungs is EVENT_FAILURE_THRESHOLD. */
+const LADDER_MS = [5_000, 10_000, 30_000, 60_000];
+const FIVE_MIN = 5 * 60_000;
 
 function createAuthStub() {
   return {
@@ -141,19 +144,18 @@ describe('AlarmEventListener reconnection', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(getInstances()).toHaveLength(4);
 
-    // Failure 4 → 60s (capped)
+    // Failure 4 → 60s (the ladder's cap)
     closeWs(getInstances()[3], 1006);
     await vi.advanceTimersByTimeAsync(59_999);
     expect(getInstances()).toHaveLength(4);
     await vi.advanceTimersByTimeAsync(1);
     expect(getInstances()).toHaveLength(5);
 
-    // Failure 5 → still 60s (capped)
+    // Failure 5 hits EVENT_FAILURE_THRESHOLD and opens the circuit, so the
+    // ladder's 60s cap no longer applies — see the circuit breaker suite below.
+    expect(listener.circuitState).toBe('closed');
     closeWs(getInstances()[4], 1006);
-    await vi.advanceTimersByTimeAsync(59_999);
-    expect(getInstances()).toHaveLength(5);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(getInstances()).toHaveLength(6);
+    expect(listener.circuitState).toBe('open');
   });
 
   it('resets backoff counter after successful connection', async () => {
@@ -272,5 +274,101 @@ describe('AlarmEventListener reconnection', () => {
     // Advance past the refresh point
     await vi.advanceTimersByTimeAsync(1);
     expect(getInstances()).toHaveLength(1);
+  });
+
+  describe('circuit breaker', () => {
+    /** Drive the listener through five handshakes that never reach `open`. */
+    async function failUntilOpen() {
+      for (const delay of LADDER_MS) {
+        closeWs(getInstances()[getInstances().length - 1], 1006);
+        await vi.advanceTimersByTimeAsync(delay);
+      }
+      closeWs(getInstances()[getInstances().length - 1], 1006);
+    }
+
+    it('opens after five handshake failures and abandons the fast ladder', async () => {
+      await listener.start();
+      await failUntilOpen();
+
+      expect(listener.circuitState).toBe('open');
+      expect(getInstances()).toHaveLength(5);
+
+      // The ladder would have reconnected at 60s. The circuit does not.
+      await vi.advanceTimersByTimeAsync(FIVE_MIN - 1);
+      expect(getInstances()).toHaveLength(5);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(getInstances()).toHaveLength(6);
+    });
+
+    it('escalates the cooldown when a probe also fails', async () => {
+      await listener.start();
+      await failUntilOpen();
+
+      await vi.advanceTimersByTimeAsync(FIVE_MIN);
+      expect(getInstances()).toHaveLength(6);
+
+      // Probe failed → next probe is 15 minutes out, not another 5.
+      closeWs(getInstances()[5], 1006);
+      await vi.advanceTimersByTimeAsync(FIVE_MIN);
+      expect(getInstances()).toHaveLength(6);
+
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(getInstances()).toHaveLength(7);
+    });
+
+    it('closes on the first successful probe and restores the fast ladder', async () => {
+      await listener.start();
+      await failUntilOpen();
+
+      await vi.advanceTimersByTimeAsync(FIVE_MIN);
+      openLatestWs();
+
+      expect(listener.circuitState).toBe('closed');
+
+      // Back on the 5s first rung — a breaker that needed a restart to clear
+      // would have kept the listener dark instead.
+      closeWs(getInstances()[5], 1006);
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(getInstances()).toHaveLength(6);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(getInstances()).toHaveLength(7);
+    });
+
+    it('does not open while sockets keep opening, however often they drop', async () => {
+      await listener.start();
+
+      for (let i = 0; i < 10; i++) {
+        const ws = openLatestWs();
+        closeWs(ws, 1006);
+        await vi.advanceTimersByTimeAsync(5_000);
+      }
+
+      // Each socket reached `open`, so Alarm.com is answering. Flapping is a
+      // different fault from an outage and must not pause the loop.
+      expect(listener.circuitState).toBe('closed');
+      expect(getInstances()).toHaveLength(11);
+    });
+
+    it('counts token failures that never reach a socket, and cuts the call rate', async () => {
+      listener.on('error', () => {}); // prevent unhandled error event
+      auth.get.mockRejectedValue(new Error('network error'));
+
+      await listener.start();
+      for (const delay of LADDER_MS) {
+        await vi.advanceTimersByTimeAsync(delay);
+      }
+
+      // Five attempts inside ~105 seconds — the measured ~60/hour rate.
+      expect(listener.circuitState).toBe('open');
+      expect(auth.get).toHaveBeenCalledTimes(5);
+      expect(getInstances()).toHaveLength(0);
+
+      await vi.advanceTimersByTimeAsync(FIVE_MIN - 1);
+      expect(auth.get).toHaveBeenCalledTimes(5);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(auth.get).toHaveBeenCalledTimes(6);
+    });
   });
 });

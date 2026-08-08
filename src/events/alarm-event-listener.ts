@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
 import { createChildLogger } from '../utils/logger.js';
 import { retry } from '../utils/retry.js';
+import { CircuitBreaker, type CircuitState } from '../utils/circuit-breaker.js';
 import type { AlarmAuth } from '../auth/alarm-auth.js';
 import {
   EventType,
@@ -16,6 +17,13 @@ const WS_TOKEN_URL = 'https://www.alarm.com/web/api/websockets/token';
 const TOKEN_REFRESH_MS = 240_000;
 const BACKOFF_STEPS_MS = [5_000, 10_000, 30_000, 60_000];
 const EXPECTED_CLOSE_CODES: ReadonlySet<number> = new Set([1000, 1008]);
+/**
+ * Five consecutive failures is roughly 2.5 minutes of the backoff ladder above.
+ * This is the loop that matters most: measured at ~60 failures/hour during a
+ * sustained multi-hour outage, ten times the token poller's rate, because its
+ * ladder caps at 60s and nothing ever stopped it.
+ */
+export const EVENT_FAILURE_THRESHOLD = 5;
 
 interface WsTokenResponse {
   value: string;
@@ -34,9 +42,18 @@ export class AlarmEventListener extends EventEmitter {
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private consecutiveFailures = 0;
   private running = false;
+  private readonly breaker = new CircuitBreaker({
+    label: 'events',
+    failureThreshold: EVENT_FAILURE_THRESHOLD,
+  });
 
   constructor(private readonly auth: AlarmAuth) {
     super();
+  }
+
+  /** Circuit state for this listener, for status reporting. */
+  get circuitState(): CircuitState {
+    return this.breaker.state;
   }
 
   async start(): Promise<void> {
@@ -70,6 +87,23 @@ export class AlarmEventListener extends EventEmitter {
 
   private async connect(): Promise<void> {
     this.clearTimers();
+
+    if (!this.breaker.tryAttempt()) {
+      log.debug('Reconnect suppressed — circuit open');
+      // A denied attempt always leaves a positive remainder, but scheduling 0
+      // here would recurse into connect() synchronously and blow the stack, so
+      // do not let that invariant be the only thing standing between a future
+      // refactor and a crash loop.
+      this.scheduleReconnect(Math.max(1, this.breaker.retryAfterMs()));
+      return;
+    }
+
+    // Whether this particular socket ever reached `open`. A socket that never
+    // opened produced no usable result and is a circuit failure; one that
+    // opened and later closed already recorded its success, and its close is
+    // the start of a new attempt rather than the failure of this one.
+    let opened = false;
+
     try {
       const tokenResponse = await retry(
         () => this.auth.get<WsTokenResponse>(WS_TOKEN_URL),
@@ -88,7 +122,9 @@ export class AlarmEventListener extends EventEmitter {
 
       this.ws.on('open', () => {
         log.info('WebSocket connected to %s', endpoint);
+        opened = true;
         this.consecutiveFailures = 0;
+        this.breaker.recordSuccess();
         this.refreshTimer = setTimeout(() => {
           this.refreshTimer = null;
           log.info('Proactive token refresh');
@@ -110,6 +146,14 @@ export class AlarmEventListener extends EventEmitter {
         this.ws = null;
         this.clearTimers();
 
+        if (!opened) {
+          // Never opened — the handshake was rejected. This is the shape the
+          // observed ~60/hour 401s took, and none of them threw.
+          this.breaker.recordFailure(`closed before open (code ${code})`);
+          this.scheduleReconnect(this.nextBackoffDelay());
+          return;
+        }
+
         if (EXPECTED_CLOSE_CODES.has(code)) {
           this.scheduleReconnect(0);
         } else {
@@ -119,6 +163,7 @@ export class AlarmEventListener extends EventEmitter {
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       log.error('Failed to connect: %s', error.message);
+      this.breaker.recordFailure(error.message);
       this.emit('error', error);
       this.scheduleReconnect(this.nextBackoffDelay());
     }
@@ -154,6 +199,11 @@ export class AlarmEventListener extends EventEmitter {
   }
 
   private nextBackoffDelay(): number {
+    // Once the circuit is open the fast ladder is abandoned for the breaker's
+    // escalating cooldown; the ladder's own cap of 60s is what made this loop
+    // the dominant source of failed calls during a sustained outage.
+    if (this.breaker.state === 'open') return this.breaker.retryAfterMs();
+
     const delay = BACKOFF_STEPS_MS[Math.min(this.consecutiveFailures, BACKOFF_STEPS_MS.length - 1)];
     this.consecutiveFailures++;
     return delay;

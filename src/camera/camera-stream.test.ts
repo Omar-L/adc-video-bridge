@@ -315,6 +315,67 @@ describe('CameraStream.reconnect', () => {
   });
 });
 
+describe('CameraStream RTP track selection', () => {
+  const event = () => {
+    const handlers: Array<(...args: any[]) => void> = [];
+    return {
+      subscribe: vi.fn((handler: (...args: any[]) => void) => {
+        handlers.push(handler);
+      }),
+      emit: (...args: any[]) => {
+        for (const handler of handlers) handler(...args);
+      },
+    };
+  };
+
+  it('ignores werift placeholder tracks and forwards RTP from the registered onTrack track', () => {
+    const stream = new CameraStream('cam-123', 'test-camera', 'rtsp://localhost:8554');
+    const placeholderRtp = event();
+    const actualRtp = event();
+    const placeholderTrack = { kind: 'video', onReceiveRtp: placeholderRtp };
+    const actualTrack = { kind: 'video', onReceiveRtp: actualRtp };
+    const onRemoteTransceiverAdded = event();
+    const onTrack = event();
+    const connectionStateChange = event();
+    const pc = {
+      onRemoteTransceiverAdded,
+      onTrack,
+      ontrack: null,
+      connectionStateChange,
+      onIceCandidate: event(),
+      iceConnectionStateChange: event(),
+      iceGatheringStateChange: event(),
+      getTransceivers: vi.fn().mockReturnValue([]),
+    };
+    const startFfmpeg = vi.spyOn(stream as any, 'startFfmpeg').mockImplementation(() => {});
+
+    (stream as any).pc = pc;
+    (stream as any).videoPort = 12345;
+    (stream as any).setupPeerConnection();
+
+    onRemoteTransceiverAdded.emit({
+      mid: 'video0',
+      kind: 'video',
+      direction: 'recvonly',
+      receiver: { track: placeholderTrack },
+    });
+    expect(startFfmpeg).not.toHaveBeenCalled();
+
+    onTrack.emit(actualTrack);
+    expect(startFfmpeg).toHaveBeenCalledOnce();
+
+    const packet = { serialize: vi.fn().mockReturnValue(Buffer.from([1, 2, 3])) };
+    actualRtp.emit(packet);
+
+    expect((stream as any).videoSocket.send).toHaveBeenCalledWith(
+      Buffer.from([1, 2, 3]),
+      12345,
+      '127.0.0.1',
+    );
+    expect(packet.serialize).toHaveBeenCalledOnce();
+  });
+});
+
 describe('CameraStream ffmpeg mid-stream exit recovery', () => {
   let stream: CameraStream;
   let exitHandler: (code: number | null) => void;

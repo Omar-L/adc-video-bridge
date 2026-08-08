@@ -301,19 +301,20 @@ export class CameraStream {
       log.info({ camera: this.cameraName, source }, 'Video streaming active');
     };
 
-    // Method 1: onRemoteTransceiverAdded — earliest possible, receiver may not exist yet
+    // onRemoteTransceiverAdded fires before werift has registered the remote
+    // SSRC-backed track. At that point receiver.track can be a placeholder
+    // defaultTrack which never receives RTP. Observe it for diagnostics, but
+    // wait for onTrack before subscribing so the real track wins the guard.
     pc.onRemoteTransceiverAdded.subscribe((transceiver) => {
       log.info(
         { camera: this.cameraName, mid: transceiver.mid, kind: transceiver.kind, direction: transceiver.direction,
           hasReceiver: !!transceiver.receiver, hasTrack: !!transceiver.receiver?.track },
         'Remote transceiver added',
       );
-      if (transceiver.kind === 'video' && transceiver.receiver?.track) {
-        subscribeToRtp(transceiver.receiver.track, 'onRemoteTransceiverAdded');
-      }
     });
 
-    // Method 2: onTrack — standard event
+    // Method 1: onTrack — werift emits this after it registers the actual
+    // remote media track and routes the negotiated SSRC to it.
     pc.onTrack.subscribe((track) => {
       log.info({ camera: this.cameraName, kind: track.kind }, 'onTrack fired');
       if (track.kind === 'video') {
@@ -321,7 +322,7 @@ export class CameraStream {
       }
     });
 
-    // Method 3: ontrack callback — alternative style
+    // Method 2: ontrack callback — alternative style
     pc.ontrack = (ev) => {
       log.info({ camera: this.cameraName, kind: ev.track.kind }, 'ontrack callback fired');
       if (ev.track.kind === 'video') {
@@ -329,7 +330,7 @@ export class CameraStream {
       }
     };
 
-    // Method 4: When connected, scan transceivers as last resort
+    // Method 3: When connected, scan transceivers as last resort
     pc.connectionStateChange.subscribe((state) => {
       if (state !== 'connected') return;
       log.info({ camera: this.cameraName }, 'Connection connected, scanning transceivers');

@@ -315,6 +315,67 @@ describe('CameraStream.reconnect', () => {
   });
 });
 
+describe('CameraStream RTP track selection', () => {
+  const event = () => {
+    const handlers: Array<(...args: any[]) => void> = [];
+    return {
+      subscribe: vi.fn((handler: (...args: any[]) => void) => {
+        handlers.push(handler);
+      }),
+      emit: (...args: any[]) => {
+        for (const handler of handlers) handler(...args);
+      },
+    };
+  };
+
+  it('ignores werift placeholder tracks and forwards RTP from the registered onTrack track', () => {
+    const stream = new CameraStream('cam-123', 'test-camera', 'rtsp://localhost:8554');
+    const placeholderRtp = event();
+    const actualRtp = event();
+    const placeholderTrack = { kind: 'video', onReceiveRtp: placeholderRtp };
+    const actualTrack = { kind: 'video', onReceiveRtp: actualRtp };
+    const onRemoteTransceiverAdded = event();
+    const onTrack = event();
+    const connectionStateChange = event();
+    const pc = {
+      onRemoteTransceiverAdded,
+      onTrack,
+      ontrack: null,
+      connectionStateChange,
+      onIceCandidate: event(),
+      iceConnectionStateChange: event(),
+      iceGatheringStateChange: event(),
+      getTransceivers: vi.fn().mockReturnValue([]),
+    };
+    const startFfmpeg = vi.spyOn(stream as any, 'startFfmpeg').mockImplementation(() => {});
+
+    (stream as any).pc = pc;
+    (stream as any).videoPort = 12345;
+    (stream as any).setupPeerConnection();
+
+    onRemoteTransceiverAdded.emit({
+      mid: 'video0',
+      kind: 'video',
+      direction: 'recvonly',
+      receiver: { track: placeholderTrack },
+    });
+    expect(startFfmpeg).not.toHaveBeenCalled();
+
+    onTrack.emit(actualTrack);
+    expect(startFfmpeg).toHaveBeenCalledOnce();
+
+    const packet = { serialize: vi.fn().mockReturnValue(Buffer.from([1, 2, 3])) };
+    actualRtp.emit(packet);
+
+    expect((stream as any).videoSocket.send).toHaveBeenCalledWith(
+      Buffer.from([1, 2, 3]),
+      12345,
+      '127.0.0.1',
+    );
+    expect(packet.serialize).toHaveBeenCalledOnce();
+  });
+});
+
 describe('CameraStream ffmpeg mid-stream exit recovery', () => {
   let stream: CameraStream;
   let exitHandler: (code: number | null) => void;
@@ -374,6 +435,47 @@ describe('CameraStream ffmpeg mid-stream exit recovery', () => {
     exitHandler(0);
 
     expect(stream.state).toBe('idle');
+  });
+
+  it('ignores a late exit from an intentionally stopped ffmpeg process', async () => {
+    const callback = vi.fn();
+    stream.onUnexpectedExit = callback;
+
+    const ffmpeg = (stream as any).ffmpeg;
+    ffmpeg.kill.mockImplementation(() => exitHandler(0));
+
+    await stream.stop();
+
+    expect(ffmpeg.kill).toHaveBeenCalledWith('SIGTERM');
+    expect((stream as any).ffmpeg).toBeNull();
+    expect(stream.state).toBe('idle');
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it('does not clear or restart a replacement when an older ffmpeg exits', async () => {
+    const callback = vi.fn();
+    stream.onUnexpectedExit = callback;
+    const staleExitHandler = exitHandler;
+
+    const { spawn } = await import('node:child_process');
+    const replacement = {
+      stdin: { write: vi.fn(), end: vi.fn() },
+      stdout: { on: vi.fn() },
+      stderr: { on: vi.fn() },
+      on: vi.fn(),
+      kill: vi.fn(),
+    } as any;
+    vi.mocked(spawn).mockReturnValue(replacement);
+
+    (stream as any).ffmpeg = null;
+    (stream as any).startFfmpeg();
+    expect((stream as any).ffmpeg).toBe(replacement);
+
+    staleExitHandler(0);
+
+    expect((stream as any).ffmpeg).toBe(replacement);
+    expect(stream.state).toBe('streaming');
+    expect(callback).not.toHaveBeenCalled();
   });
 });
 

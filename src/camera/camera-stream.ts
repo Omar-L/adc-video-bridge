@@ -142,8 +142,12 @@ export class CameraStream {
     }
 
     if (this.ffmpeg) {
-      this.ffmpeg.kill('SIGTERM');
+      // Detach ownership before signaling the child. The exit event may be
+      // delivered after a replacement ffmpeg has already started; that stale
+      // event must not clear the replacement or trigger stream recovery.
+      const ffmpeg = this.ffmpeg;
       this.ffmpeg = null;
+      ffmpeg.kill('SIGTERM');
     }
 
     if (this.videoSocket) {
@@ -301,19 +305,20 @@ export class CameraStream {
       log.info({ camera: this.cameraName, source }, 'Video streaming active');
     };
 
-    // Method 1: onRemoteTransceiverAdded — earliest possible, receiver may not exist yet
+    // onRemoteTransceiverAdded fires before werift has registered the remote
+    // SSRC-backed track. At that point receiver.track can be a placeholder
+    // defaultTrack which never receives RTP. Observe it for diagnostics, but
+    // wait for onTrack before subscribing so the real track wins the guard.
     pc.onRemoteTransceiverAdded.subscribe((transceiver) => {
       log.info(
         { camera: this.cameraName, mid: transceiver.mid, kind: transceiver.kind, direction: transceiver.direction,
           hasReceiver: !!transceiver.receiver, hasTrack: !!transceiver.receiver?.track },
         'Remote transceiver added',
       );
-      if (transceiver.kind === 'video' && transceiver.receiver?.track) {
-        subscribeToRtp(transceiver.receiver.track, 'onRemoteTransceiverAdded');
-      }
     });
 
-    // Method 2: onTrack — standard event
+    // Method 1: onTrack — werift emits this after it registers the actual
+    // remote media track and routes the negotiated SSRC to it.
     pc.onTrack.subscribe((track) => {
       log.info({ camera: this.cameraName, kind: track.kind }, 'onTrack fired');
       if (track.kind === 'video') {
@@ -321,7 +326,7 @@ export class CameraStream {
       }
     });
 
-    // Method 3: ontrack callback — alternative style
+    // Method 2: ontrack callback — alternative style
     pc.ontrack = (ev) => {
       log.info({ camera: this.cameraName, kind: ev.track.kind }, 'ontrack callback fired');
       if (ev.track.kind === 'video') {
@@ -329,7 +334,7 @@ export class CameraStream {
       }
     };
 
-    // Method 4: When connected, scan transceivers as last resort
+    // Method 3: When connected, scan transceivers as last resort
     pc.connectionStateChange.subscribe((state) => {
       if (state !== 'connected') return;
       log.info({ camera: this.cameraName }, 'Connection connected, scanning transceivers');
@@ -463,13 +468,14 @@ export class CameraStream {
     ];
 
     log.info({ camera: this.cameraName, rtspUrl }, 'Starting ffmpeg');
-    this.ffmpeg = spawn('ffmpeg', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const ffmpeg = spawn('ffmpeg', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    this.ffmpeg = ffmpeg;
 
     // Write the SDP to ffmpeg's stdin, then close it
-    this.ffmpeg.stdin?.write(sdp);
-    this.ffmpeg.stdin?.end();
+    ffmpeg.stdin?.write(sdp);
+    ffmpeg.stdin?.end();
 
-    this.ffmpeg.stderr?.on('data', (data: Buffer) => {
+    ffmpeg.stderr?.on('data', (data: Buffer) => {
       const line = data.toString().trim();
       if (!line) return;
       // ffmpeg progress lines are noisy once streaming is established
@@ -481,7 +487,15 @@ export class CameraStream {
       }
     });
 
-    this.ffmpeg.on('exit', (code) => {
+    ffmpeg.on('exit', (code) => {
+      // Ignore an intentionally stopped or superseded child. Without this
+      // identity check, a late exit from the old process can erase the
+      // current process reference and restart an otherwise healthy stream.
+      if (this.ffmpeg !== ffmpeg) {
+        log.debug({ camera: this.cameraName, code }, 'Ignoring stale ffmpeg exit');
+        return;
+      }
+
       log.warn({ camera: this.cameraName, code }, 'ffmpeg exited');
       this.ffmpeg = null;
 

@@ -111,6 +111,21 @@ homebridge:
     expect(config.homebridge?.motionTimeoutMs).toBe(60000);
   });
 
+  it('parses a doorbell-only homebridge config', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(`
+alarm:
+  username: "u"
+  password: "p"
+homebridge:
+  doorbellUrl: "http://10.0.0.50:8080"
+`);
+    const config = loadConfig();
+    expect(config.homebridge?.doorbellUrl).toBe('http://10.0.0.50:8080');
+    expect(config.homebridge?.motionUrl).toBeUndefined();
+    expect(config.homebridge?.motionTimeoutMs).toBe(60000);
+  });
+
   it('mfaToken falls back to undefined when empty', () => {
     process.env.ADC_USERNAME = 'u';
     process.env.ADC_PASSWORD = 'p';

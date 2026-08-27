@@ -10,7 +10,8 @@ export interface CameraConfig {
 }
 
 export interface HomebridgeConfig {
-  motionUrl: string;
+  motionUrl?: string;
+  doorbellUrl?: string;
   motionTimeoutMs: number;
 }
 
@@ -81,6 +82,7 @@ export function loadConfig(): AppConfig {
     homebridge: fileConfig.homebridge
       ? {
           motionUrl: fileConfig.homebridge.motionUrl,
+          doorbellUrl: fileConfig.homebridge.doorbellUrl,
           motionTimeoutMs: fileConfig.homebridge.motionTimeoutMs ?? 60_000,
         }
       : undefined,

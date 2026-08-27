@@ -59,9 +59,10 @@ go2rtc:
   apiUrl: "http://localhost:1984"
   rtspPort: 8554
 
-# Optional: forward motion events to homebridge-camera-ffmpeg
+# Optional: forward motion and/or physical doorbell-press events to homebridge-camera-ffmpeg
 homebridge:
   motionUrl: "http://<homebridge-ip>:8080"
+  doorbellUrl: "http://<homebridge-ip>:8080"
   motionTimeoutMs: 60000  # reset motion after 60s of no activity
 
 logging:
@@ -70,7 +71,8 @@ logging:
 
 - `name` is the go2rtc stream identifier — keep it lowercase with no spaces.
 - `homebridgeName` must exactly match the camera name you set in homebridge-camera-ffmpeg.
-- `homebridge.motionUrl` is the base URL of the homebridge-camera-ffmpeg HTTP server. Leave the entire `homebridge` section out to disable motion webhooks.
+- `homebridge.motionUrl` forwards motion events and `homebridge.doorbellUrl` forwards physical doorbell presses. They are independent; omit either one to disable that event type.
+- Both URLs are the base URL of the homebridge-camera-ffmpeg HTTP server. Leave the entire `homebridge` section out to disable all Homebridge webhooks.
 
 ### `config/go2rtc.yaml`
 
@@ -127,6 +129,8 @@ In the Homebridge UI, add a camera to the Camera-ffmpeg platform for each stream
 | **Motion sensor** | enabled |
 | **Motion Timeout** | `0` (the bridge controls the reset via `motionTimeoutMs`) |
 
+For a doorbell camera, also enable **Doorbell**. Keep **Motion Doorbell** disabled unless you intentionally want motion events treated as button presses.
+
 The `-timeout 10000000` (10 seconds) on the still image source prevents ffmpeg from hanging indefinitely when go2rtc has no frame available during token refresh gaps. Without it, Homebridge can become unresponsive.
 
 ### Platform-level settings
@@ -146,6 +150,8 @@ For each camera in the Apple Home app:
 3. Enable **Notifications** for motion events
 
 Motion is detected via Alarm.com's real-time WebSocket event stream and forwarded to Homebridge automatically. When a camera detects motion, the bridge sends a trigger to homebridge-camera-ffmpeg's HTTP server, which activates the HomeKit motion sensor. After the configured timeout (default 60 seconds), the motion sensor resets.
+
+Physical doorbell presses are forwarded separately to the plugin's doorbell endpoint. Motion events never call that endpoint, so ordinary motion does not produce a doorbell notification.
 
 ## Rebuild and redeploy
 
@@ -168,6 +174,7 @@ docker compose -f docker-compose.yml restart
 - **Snapshots timing out in Homebridge**: Ensure the still image source includes `-timeout 10000000` before `-i`.
 - **Motion not triggering in HomeKit**: Verify `homebridgeName` matches the camera name in homebridge-camera-ffmpeg exactly (case-sensitive). Check that the motion sensor is enabled in the plugin config and notifications are enabled in the Home app.
 - **"Camera not found" in motion webhook logs**: The `homebridgeName` doesn't match. The bridge calls `GET http://<motionUrl>/motion?<homebridgeName>` — the name must be an exact match.
+- **Doorbell press not triggering in HomeKit**: Verify `doorbellUrl`, the HTTP port, and the exact `homebridgeName`. The bridge calls `GET http://<doorbellUrl>/doorbell?<homebridgeName>` only for Alarm.com doorbell-press events.
 - **go2rtc web UI not loading**: Ensure port 1984 is exposed in docker-compose.yml and not blocked by a firewall.
 
 ## Local development

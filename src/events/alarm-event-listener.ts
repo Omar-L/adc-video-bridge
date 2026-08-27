@@ -193,6 +193,10 @@ export class AlarmEventListener extends EventEmitter {
         log.debug({ cameraId: base.cameraId, value: base.eventValue }, 'Sensor change');
         this.emit('sensorChange', { ...base, eventType: EventType.SENSOR_CHANGE });
         break;
+      case EventType.DOORBELL:
+        log.info({ cameraId: base.cameraId }, 'Doorbell pressed');
+        this.emit('doorbell', { ...base, eventType: EventType.DOORBELL });
+        break;
       default:
         log.debug({ eventType: base.eventType, deviceId: base.deviceId }, 'Unhandled event type');
     }

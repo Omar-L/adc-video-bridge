@@ -34,10 +34,10 @@ The approach was proven by [kjjohnsen/HomeAssistantADCCameraIntegration](https:/
 │       │                                              │    │
 │  [AlarmEventListener]                                │    │
 │   ADC WebSocket event stream                         │    │
-│   motion / sensor / clip events                      │    │
+│   motion / doorbell / sensor / clip events           │    │
 │       │                                              │    │
 └───────┼──────────────────────────────────────────────┼────┘
-        │ motion webhook                    RTSP push  │
+        │ motion / doorbell webhooks         RTSP push  │
         │                                ┌─────▼─────┐
         │                                │  go2rtc    │ (same container)
         │                                │  RTSP in   │
@@ -89,7 +89,9 @@ The bridge refreshes video tokens every 10 minutes, tearing down and re-establis
 - Real-time motion detection via ADC WebSocket event stream
 - WebSocket event listener with proactive token refresh and exponential backoff on errors
 - Motion webhook forwarding to homebridge-camera-ffmpeg
+- Physical doorbell-press forwarding to homebridge-camera-ffmpeg (ADC event 136; verified with VDB775)
 - HomeKit live view and motion notifications via Homebridge
+- HomeKit doorbell notifications without treating motion as a button press
 - HomeKit Secure Video (HKSV) recording triggered by motion events
 
 **Not yet done:**

@@ -49,12 +49,13 @@ async function main(): Promise<void> {
     log.warn('Event listener error: %s', err.message);
   });
 
+  const cameraIdToHbName = new Map(
+    config.cameras.map((c) => [c.id, c.homebridgeName ?? c.name]),
+  );
+
   // Motion webhook to Homebridge
   if (config.homebridge?.motionUrl) {
     const { motionUrl, motionTimeoutMs } = config.homebridge;
-    const cameraIdToHbName = new Map(
-      config.cameras.map((c) => [c.id, c.homebridgeName ?? c.name]),
-    );
     const motionTimers = new Map<string, ReturnType<typeof setTimeout>>();
     const motionActive = new Set<string>();
 
@@ -97,6 +98,31 @@ async function main(): Promise<void> {
           sendMotionToggle(hbName);
         }, motionTimeoutMs),
       );
+    });
+  }
+
+  // Doorbell-press webhook to Homebridge. This is deliberately independent
+  // from motion forwarding so ordinary motion cannot generate doorbell alerts.
+  if (config.homebridge?.doorbellUrl) {
+    const { doorbellUrl } = config.homebridge;
+
+    log.info({ doorbellUrl }, 'Homebridge doorbell webhooks enabled');
+
+    eventListener.on('doorbell', async (event) => {
+      const hbName = cameraIdToHbName.get(event.cameraId);
+      if (!hbName) return;
+
+      const url = `${doorbellUrl}/doorbell?${encodeURIComponent(hbName)}`;
+      try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        log.info({ camera: hbName, status: res.status }, 'Doorbell webhook sent');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warn({ camera: hbName }, 'Doorbell webhook failed: %s', msg);
+      }
     });
   }
 

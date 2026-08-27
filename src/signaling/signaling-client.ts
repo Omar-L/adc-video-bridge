@@ -60,36 +60,52 @@ export class SignalingClient extends EventEmitter {
     log.info({ camera: this.cameraName }, 'Connecting to signaling server...');
 
     return new Promise<void>((resolve, reject) => {
-      this.ws = new WebSocket(wsUrl);
+      const socket = new WebSocket(wsUrl);
+      this.ws = socket;
 
       const timeout = setTimeout(() => {
         reject(new Error('Signaling connection timeout (30s)'));
-        this.close();
+        if (this.ws === socket) this.close();
       }, 30_000);
 
-      this.ws.on('open', () => {
+      socket.on('open', () => {
+        if (this.ws !== socket) return;
         log.debug({ camera: this.cameraName }, 'WebSocket connected, sending HELLO');
         this.state = 'hello';
-        this.ws!.send('HELLO 2.0.1');
+        socket.send('HELLO 2.0.1');
       });
 
-      this.ws.on('message', (data: WebSocket.Data) => {
+      socket.on('message', (data: WebSocket.Data) => {
+        if (this.ws !== socket) return;
         const msg = data.toString();
         this.handleMessage(msg, cameraAuthToken, resolve, clearTimeoutFn);
       });
 
-      this.ws.on('close', (code, reason) => {
+      socket.on('close', (code, reason) => {
+        clearTimeout(timeout);
+        if (this.ws !== socket) return;
         const reasonStr = reason.toString();
         log.info({ camera: this.cameraName, code, reason: reasonStr }, 'WebSocket closed');
+        this.ws = null;
         this.state = 'disconnected';
         this.emit('closed', code, reasonStr);
       });
 
-      this.ws.on('error', (err) => {
+      socket.on('error', (err) => {
+        clearTimeout(timeout);
+
+        // Closing a WebSocket while it is still CONNECTING causes ws to emit
+        // an asynchronous error. A replaced/explicitly closed socket is stale;
+        // consume that expected error without forwarding it as a client error.
+        if (this.ws !== socket) {
+          log.debug({ camera: this.cameraName, error: err.message }, 'Stale WebSocket closed');
+          reject(err);
+          return;
+        }
+
         log.error({ camera: this.cameraName, error: err.message }, 'WebSocket error');
         this.emit('error', err);
         if (this.state === 'connecting' || this.state === 'hello') {
-          clearTimeout(timeout);
           reject(err);
         }
       });
@@ -130,11 +146,11 @@ export class SignalingClient extends EventEmitter {
   /** Close the WebSocket connection. */
   close(): void {
     if (this.ws) {
-      this.ws.removeAllListeners();
-      if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
-        this.ws.close();
-      }
+      const socket = this.ws;
       this.ws = null;
+      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+        socket.close();
+      }
     }
     this.state = 'disconnected';
     this.remoteId = null;

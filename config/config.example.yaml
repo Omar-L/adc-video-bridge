@@ -18,10 +18,11 @@ go2rtc:
   apiUrl: "http://localhost:1984"
   rtspPort: 8554
 
-# Optional: send motion events to homebridge-camera-ffmpeg
-# Requires "motion": true and "porthttp" set in the Homebridge plugin config
+# Optional: send motion and/or physical doorbell-press events to homebridge-camera-ffmpeg
+# Requires "porthttp" set in the Homebridge plugin config. Each URL is independent.
 # homebridge:
 #   motionUrl: "http://10.0.0.50:8080"  # homebridge-camera-ffmpeg HTTP server
+#   doorbellUrl: "http://10.0.0.50:8080"
 #   motionTimeoutMs: 60000               # reset motion after 60s of no activity
 
 logging:

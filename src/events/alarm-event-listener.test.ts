@@ -94,6 +94,31 @@ describe('AlarmEventListener reconnection', () => {
     expect(getInstances()[0].url).toBe('wss://events.alarm.com?auth=ws-token-123');
   });
 
+  it('emits a dedicated doorbell event for Alarm.com event type 136', async () => {
+    const onDoorbell = vi.fn();
+    listener.on('doorbell', onDoorbell);
+    await listener.start();
+
+    const ws = openLatestWs();
+    ws.emit('message', Buffer.from(JSON.stringify({
+      EventDateUtc: '2026-08-24T16:33:24Z',
+      UnitId: 111742314,
+      DeviceId: 2054,
+      EventType: 136,
+      EventValue: 0,
+      CorrelatedId: null,
+      QstringForExtraData: '',
+      DeviceType: 0,
+    })));
+
+    expect(onDoorbell).toHaveBeenCalledTimes(1);
+    expect(onDoorbell).toHaveBeenCalledWith(expect.objectContaining({
+      cameraId: '111742314-2054',
+      deviceId: 2054,
+      eventType: 136,
+    }));
+  });
+
   it('reconnects immediately on code 1008 (token expired)', async () => {
     await listener.start();
     const ws1 = openLatestWs();

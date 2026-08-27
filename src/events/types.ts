@@ -4,6 +4,7 @@ export const EventType = {
   VIDEO_CLIP: 71,
   LOCK: 90,
   PANEL: 100,
+  DOORBELL: 136,
   MOTION: 210,
   MOTION_END: 576,
 } as const;
@@ -39,11 +40,16 @@ export interface SensorEvent extends AlarmEvent {
   eventType: typeof EventType.SENSOR_CHANGE;
 }
 
+export interface DoorbellEvent extends AlarmEvent {
+  eventType: typeof EventType.DOORBELL;
+}
+
 export interface AlarmEventListenerEvents {
   motion: (event: MotionEvent) => void;
   motionEnd: (event: MotionEndEvent) => void;
   clipRecorded: (event: ClipEvent) => void;
   sensorChange: (event: SensorEvent) => void;
+  doorbell: (event: DoorbellEvent) => void;
   raw: (event: AlarmEvent) => void;
   error: (error: Error) => void;
 }
